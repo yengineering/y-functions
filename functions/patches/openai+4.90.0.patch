@@ -1,0 +1,13 @@
+diff --git a/node_modules/openai/_shims/node-types.d.ts b/node_modules/openai/_shims/node-types.d.ts
+index c159e5f..aa33b65 100644
+--- a/node_modules/openai/_shims/node-types.d.ts
++++ b/node_modules/openai/_shims/node-types.d.ts
+@@ -17,7 +17,7 @@ export type RequestInit = nf.RequestInit;
+ 
+ export type Response = nf.Response;
+ export type ResponseInit = nf.ResponseInit;
+-export type ResponseType = nf.ResponseType;
++export type ResponseType = nf.Response;
+ export type BodyInit = nf.BodyInit;
+ export type Headers = nf.Headers;
+ export type HeadersInit = nf.HeadersInit;
