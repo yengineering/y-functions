@@ -1,10 +1,16 @@
-import { logger } from "firebase-functions";
 import { onRequest } from "firebase-functions/https";
 import { genaiClient } from "../config";
 import admin from "../admin";
 import { authenticate } from "../utils/auth";
 import { GenerationConfig, SchemaType } from "@google/generative-ai";
 import { loadPrompt } from "../utils/loadPrompt";
+
+// Define the Message interface
+interface Message {
+  isUser: boolean;
+  content?: string;
+  [key: string]: any;
+}
 
 const generationConfig: GenerationConfig = {
   temperature: 1.0,
@@ -30,32 +36,36 @@ export const myVibe = onRequest(async (req, res) => {
 
   const uid = await authenticate(req, res, admin.app());
   if (!uid) return;
-  logger.info(`Authenticated user: ${uid}`);
 
   try {
     // Get Firestore instance
     const db = admin.firestore();
-
-    // Get conversation history from firestore
-    const conversationsRef = db
-      .collection("users")
-      .doc(uid)
-      .collection("conversations");
-
-    const conversations = await conversationsRef.get();
-    logger.info(`Query returned ${conversations.size} conversations`);
-
-    if (conversations.empty) {
+    const userDocRef = db.collection("users").doc(uid);
+    const convSnap = await userDocRef.collection("conversations").get();
+    
+    if (convSnap.empty) {
       throw new Error("Conversation history is empty.");
     }
 
     const allMessages: Array<string> = [];
-    conversations.forEach((doc) => {
+    
+    // Process each conversation document
+    convSnap.forEach((doc) => {
       const data = doc.data();
-      // Check if the document has a messages array
-      if (data.messages && Array.isArray(data.messages)) {
-        // Add each message to our collection
-        data.messages.forEach((msg) => {
+      
+      // Process yin messages
+      if (data.yin && data.yin.messages && Array.isArray(data.yin.messages)) {
+        data.yin.messages.forEach((msg: Message) => {
+          if (msg.content) {
+            const sender = msg.isUser ? "User" : "Assistant";
+            allMessages.push(`${sender}: ${msg.content}`);
+          }
+        });
+      }
+      
+      // Process yang messages
+      if (data.yang && data.yang.messages && Array.isArray(data.yang.messages)) {
+        data.yang.messages.forEach((msg: Message) => {
           if (msg.content) {
             const sender = msg.isUser ? "User" : "Assistant";
             allMessages.push(`${sender}: ${msg.content}`);
@@ -72,7 +82,6 @@ export const myVibe = onRequest(async (req, res) => {
 
     // Join all messages with line breaks
     const messagesText = allMessages.join("\n");
-    logger.info(`Extracted ${allMessages.length} messages for analysis`);
 
     const prompt = `
 ${loadPrompt("myVibe")}
@@ -91,13 +100,10 @@ ${messagesText}`;
     const responseText = llmResponse.response.text();
     const responseJson = JSON.parse(responseText);
 
-    logger.info("Raw Gemini Response Text:", responseText);
-
     res.json({
       vibe: responseJson.vibe,
     });
   } catch (error: unknown) {
-    logger.error(error);
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),
     });
