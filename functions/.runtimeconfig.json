@@ -1,0 +1,5 @@
+{
+  "gcp": {
+    "service_account": "arnav-deployment@ylol-011235.iam.gserviceaccount.com"
+  }
+}

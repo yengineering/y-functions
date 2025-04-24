@@ -12,6 +12,8 @@ import {
 } from "@google/generative-ai";
 import { authenticate } from "../utils/auth";
 import { loadPrompt } from "../utils/loadPrompt";
+import { generateCaption } from "./caption";
+
 
 interface CustomHttpsOptions extends HttpsOptions {
   allowUnparsed: boolean;
@@ -226,7 +228,17 @@ export const yang = onRequest(
 
       const messageParts: Part[] = [{ text: userPrompt }, ...imageParts];
 
-      const llmResponse = await chatSession.sendMessage(messageParts);
+      // Run both operations in parallel
+      const [llmResponse, generatedCaption] = await Promise.all([
+        chatSession.sendMessage(messageParts),
+        imageParts.length > 0 
+          ? generateCaption(imageParts, userPrompt, "yang").catch(error => {
+              logger.error("Error generating caption:", error);
+              return undefined;
+            })
+          : Promise.resolve(undefined)
+      ]);
+
       const responseText = llmResponse.response.text();
       const responseJson = JSON.parse(responseText);
 
@@ -234,6 +246,7 @@ export const yang = onRequest(
 
       res.json({
         bubbles: responseJson.bubbles,
+        caption: generatedCaption
       });
     } catch (error) {
       logger.error("Error processing endpoint:", error);

@@ -42,17 +42,17 @@ export const myVibe = onRequest(async (req, res) => {
     const db = admin.firestore();
     const userDocRef = db.collection("users").doc(uid);
     const convSnap = await userDocRef.collection("conversations").get();
-    
+
     if (convSnap.empty) {
       throw new Error("Conversation history is empty.");
     }
 
     const allMessages: Array<string> = [];
-    
+
     // Process each conversation document
     convSnap.forEach((doc) => {
       const data = doc.data();
-      
+
       // Process yin messages
       if (data.yin && data.yin.messages && Array.isArray(data.yin.messages)) {
         data.yin.messages.forEach((msg: Message) => {
@@ -62,9 +62,13 @@ export const myVibe = onRequest(async (req, res) => {
           }
         });
       }
-      
+
       // Process yang messages
-      if (data.yang && data.yang.messages && Array.isArray(data.yang.messages)) {
+      if (
+        data.yang &&
+        data.yang.messages &&
+        Array.isArray(data.yang.messages)
+      ) {
         data.yang.messages.forEach((msg: Message) => {
           if (msg.content) {
             const sender = msg.isUser ? "User" : "Assistant";

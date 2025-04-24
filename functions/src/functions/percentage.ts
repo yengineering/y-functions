@@ -24,7 +24,7 @@ export const percentage = onRequest(async (req, res) => {
     const db = admin.firestore();
     const userDocRef = db.collection("users").doc(uid);
     const convSnap = await userDocRef.collection("conversations").get();
-    
+
     if (convSnap.empty) {
       throw new Error("Conversation history is empty.");
     }
@@ -35,20 +35,28 @@ export const percentage = onRequest(async (req, res) => {
     // Process each conversation document
     convSnap.forEach((doc) => {
       const data = doc.data();
-      
+
       // Count yin messages where isUser is true
       if (data.yin && data.yin.messages && Array.isArray(data.yin.messages)) {
-        yinMessages += data.yin.messages.filter((msg: Message) => msg.isUser === true).length;
+        yinMessages += data.yin.messages.filter(
+          (msg: Message) => msg.isUser === true,
+        ).length;
       }
-      
+
       // Count yang messages where isUser is true
-      if (data.yang && data.yang.messages && Array.isArray(data.yang.messages)) {
-        yangMessages += data.yang.messages.filter((msg: Message) => msg.isUser === true).length;
+      if (
+        data.yang &&
+        data.yang.messages &&
+        Array.isArray(data.yang.messages)
+      ) {
+        yangMessages += data.yang.messages.filter(
+          (msg: Message) => msg.isUser === true,
+        ).length;
       }
     });
 
     const totalMessages = yinMessages + yangMessages;
-    
+
     // Calculate percentages (handle potential division by zero)
     const yinPercentage = totalMessages > 0 ? yinMessages / totalMessages : 0;
     const yangPercentage = totalMessages > 0 ? yangMessages / totalMessages : 0;
