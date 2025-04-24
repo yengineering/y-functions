@@ -65,12 +65,12 @@ Remember: ONE natural, flowing line that captures the mood without trying too ha
 
 // Utility function for generating captions
 export async function generateCaption(
-  imageParts: Part[], 
+  imageParts: Part[],
   userPrompt: string,
-  personality: "yin" | "yang" = "yin"
+  personality: "yin" | "yang" = "yin",
 ): Promise<string> {
   const model = personality === "yin" ? yinModel : yangModel;
-  
+
   const result = await model.generateContent([
     {
       text: `${CAPTION_PROMPT}\n\nContext from user: ${userPrompt}`,
@@ -80,9 +80,9 @@ export async function generateCaption(
 
   const response = await result.response;
   const caption = response.text();
-  
+
   logger.info(`Generated ${personality} caption:`, caption);
-  
+
   return caption;
 }
 
@@ -112,7 +112,7 @@ export const caption = onRequest(
         (
           name: string,
           fileStream: Readable,
-          info: { filename: string; mimeType: string }
+          info: { filename: string; mimeType: string },
         ) => {
           if (name !== "images") {
             fileStream.resume();
@@ -137,9 +137,9 @@ export const caption = onRequest(
                 resolve();
               });
               fileStream.on("error", reject);
-            })
+            }),
           );
-        }
+        },
       );
 
       await new Promise<void>((resolve, reject) => {
@@ -161,5 +161,5 @@ export const caption = onRequest(
       logger.error("Error generating caption:", error);
       res.status(500).send("Error generating caption");
     }
-  }
+  },
 );
