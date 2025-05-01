@@ -19,12 +19,12 @@ interface CustomHttpsOptions extends HttpsOptions {
 }
 
 const model = genaiClient.getGenerativeModel({
-  model: "gemini-2.0-flash",
+  model: "gemini-2.5-flash-preview-04-17",
   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
 });
 
 const generationConfig: GenerationConfig = {
-  temperature: 1.15,
+  temperature: 1,
   topP: 0.95,
   topK: 40,
   maxOutputTokens: 8192,
