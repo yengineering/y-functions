@@ -57,6 +57,7 @@ export const yang = onRequest(
 
     let userPrompt = "";
     let chatHistory: Content[] = [];
+    let prevPhotoDescription = "";
     // Content has role (user/model) and parts: Part[]
     // TextPart - text string
     // InlineDataPart - image data
@@ -69,6 +70,9 @@ export const yang = onRequest(
         logger.info(`Field: ${name}, Value: ${val}`);
         if (name === "prompt") {
           userPrompt = val;
+        } else if (name === "prevPhotoDescription") {
+          logger.info("📸 Previous photo description received:", val);
+          prevPhotoDescription = val;
         } else if (name === "history") {
           try {
             chatHistory = JSON.parse(val);
@@ -228,10 +232,10 @@ export const yang = onRequest(
       const messageParts: Part[] = [{ text: userPrompt }, ...imageParts];
 
       // Run both operations in parallel
-      const [llmResponse, generatedCaption] = await Promise.all([
+      const [llmResponse, captionResult] = await Promise.all([
         chatSession.sendMessage(messageParts),
         imageParts.length > 0
-          ? generateCaption(imageParts, userPrompt, "yang").catch((error) => {
+          ? generateCaption(imageParts, userPrompt, "yang", prevPhotoDescription).catch((error) => {
               logger.error("Error generating caption:", error);
               return undefined;
             })
@@ -242,10 +246,13 @@ export const yang = onRequest(
       const responseJson = JSON.parse(responseText);
 
       logger.info("Raw Gemini Response Text:", responseText);
+      logger.info("Caption Generation Result:", captionResult);
 
       res.json({
         bubbles: responseJson.bubbles,
-        caption: generatedCaption,
+        caption: captionResult?.caption,
+        description: captionResult?.description,
+        transitionalComment: captionResult?.transitionalComment,
       });
     } catch (error) {
       logger.error("Error processing endpoint:", error);
