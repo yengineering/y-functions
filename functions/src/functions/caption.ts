@@ -61,7 +61,9 @@ Bad examples (don't write like this):
 - what do you think of this view?
 - Option 1: ... / Option 2: ...
 
-Remember: ONE natural, flowing line that captures the mood without trying too hard.`;
+Remember: ONE natural, flowing line that captures the mood without trying too hard.
+
+Don't return any other text than the caption. Return only the caption.`;
 
 const YIN_TRANSITION_PROMPT = `You're looking at two photos in sequence. The first shows: "{prevPhotoDescription}". The second shows what's in the current image.
 
