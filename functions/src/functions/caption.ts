@@ -20,6 +20,7 @@ interface ProcessedFormData {
   imageParts: Part[];
 }
 
+<<<<<<< HEAD
 // Process all form data including fields and files in a single function
 async function processFormDataAndImages(req: import('express').Request): Promise<ProcessedFormData> {
   logger.info("[Chat-API-Logs] 📝 Starting form data processing");
@@ -31,6 +32,12 @@ async function processFormDataAndImages(req: import('express').Request): Promise
     let personality: "yin" | "yang" = "yin";
     const imageParts: Part[] = [];
     const filePromises: Promise<void>[] = [];
+=======
+const yangModel = genaiClient.getGenerativeModel({
+  model: "gemini-2.5-flash-preview-04-17",
+  systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
+});
+>>>>>>> main
 
     // Handle form fields
     bb.on("field", (name: string, val: string) => {
