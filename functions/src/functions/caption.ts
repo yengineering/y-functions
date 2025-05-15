@@ -12,6 +12,127 @@ interface CustomHttpsOptions extends HttpsOptions {
   allowUnparsed: boolean;
 }
 
+// Interface for processed form data and images
+interface ProcessedFormData {
+  userPrompt: string;
+  prevPhotoDescription?: string;
+  personality: "yin" | "yang";
+  imageParts: Part[];
+}
+
+// Process all form data including fields and files in a single function
+async function processFormDataAndImages(req: import('express').Request): Promise<ProcessedFormData> {
+  logger.info("[Chat-API-Logs] 📝 Starting form data processing");
+  
+  return await new Promise((resolve, reject) => {
+    const bb = busboy({ headers: req.headers });
+    let userPrompt = "";
+    let prevPhotoDescription: string | undefined;
+    let personality: "yin" | "yang" = "yin";
+    const imageParts: Part[] = [];
+    const filePromises: Promise<void>[] = [];
+
+    // Handle form fields
+    bb.on("field", (name: string, val: string) => {
+      logger.info(`[Chat-API-Logs] 📋 Processing field: ${name}`);
+      
+      if (name === "prompt") {
+        userPrompt = val;
+        logger.info("[Chat-API-Logs] - User prompt received:", { length: val.length });
+      } else if (name === "prevPhotoDescription") {
+        logger.info("[Chat-API-Logs] 📸 Previous photo description received:", { length: val.length });
+        prevPhotoDescription = val;
+      } else if (name === "personality") {
+        const requestedPersonality = val.toLowerCase() as "yin" | "yang";
+        if (requestedPersonality === "yin" || requestedPersonality === "yang") {
+          personality = requestedPersonality;
+          logger.info(`[Chat-API-Logs] 👤 Using personality: ${personality}`);
+        } else {
+          logger.warn(`[Chat-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`);
+        }
+      }
+    });
+
+    // Handle file uploads
+    bb.on("file", (name: string, fileStream: Readable, info: { filename: string; mimeType: string }) => {
+      if (name !== "images") {
+        logger.info(`[Chat-API-Logs] ⚠️ Skipping non-image file: ${name}`);
+        fileStream.resume();
+        return;
+      }
+
+      logger.info(`[Chat-API-Logs] 📤 Processing file:`, {
+        filename: info.filename,
+        mimeType: info.mimeType
+      });
+
+      // Validate image MIME types
+      const allowedMimeTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/heif",
+        "image/webp",
+      ];
+      if (!allowedMimeTypes.includes(info.mimeType)) {
+        logger.warn(`[Chat-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`);
+        fileStream.resume();
+        return;
+      }
+
+      // Collect file chunks
+      const chunks: Buffer[] = [];
+      fileStream.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+
+      // Process the file when upload is complete
+      filePromises.push(
+        new Promise<void>((resolve, reject) => {
+          fileStream.on("end", () => {
+            const buffer = Buffer.concat(chunks);
+            imageParts.push({
+              inlineData: {
+                mimeType: info.mimeType,
+                data: buffer.toString("base64"),
+              },
+            });
+            logger.info(`[Chat-API-Logs] ✅ File processed: ${info.filename}`);
+            resolve();
+          });
+          fileStream.on("error", (error) => {
+            logger.error(`[Chat-API-Logs] ❌ Error processing file: ${info.filename}`, error);
+            reject(error);
+          });
+        }),
+      );
+    });
+
+    // Handle completion
+    bb.on("finish", async () => {
+      try {
+        await Promise.all(filePromises);
+        logger.info(`[Chat-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`);
+        resolve({
+          userPrompt,
+          prevPhotoDescription,
+          personality,
+          imageParts
+        });
+      } catch (error) {
+        logger.error("[Chat-API-Logs] ❌ Error processing files:", error);
+        reject(error);
+      }
+    });
+
+    bb.once("error", (error) => {
+      logger.error("[Chat-API-Logs] ❌ Busboy error:", error);
+      reject(error);
+    });
+
+    bb.end((req as any).rawBody);
+  });
+}
+
 // HTTP endpoint for generating image captions
 export const caption = onRequest(
   { allowUnparsed: true } as CustomHttpsOptions,
@@ -34,25 +155,17 @@ export const caption = onRequest(
     logger.info(`[Chat-API-Logs] 👤 Authenticated user: ${uid}`);
 
     try {
-      // Initialize busboy to parse multipart form data
-      const bb = busboy({ headers: req.headers });
-      
-      // Process the form data to get text fields and detect if images are present
-      logger.info("[Chat-API-Logs] 📝 Processing form data...");
-      const { userPrompt, prevPhotoDescription, personality, hasImages } = 
-        await processFormData(bb, req.rawBody);
+      // Process form data and images in a single step
+      logger.info("[Chat-API-Logs] 📝 Processing form data and images...");
+      const { userPrompt, prevPhotoDescription, personality, imageParts } = 
+        await processFormDataAndImages(req);
 
       logger.info("[Chat-API-Logs] 📦 Form data processed:", {
         hasUserPrompt: !!userPrompt,
         hasPrevDescription: !!prevPhotoDescription,
         personality,
-        hasImages
+        imageCount: imageParts.length
       });
-
-      // Process images if present
-      const { imageParts } = hasImages
-        ? await processImages(bb, req.rawBody)
-        : { imageParts: [] };
 
       // Validate that at least one image was provided
       if (imageParts.length === 0) {
@@ -60,10 +173,6 @@ export const caption = onRequest(
         res.status(400).send("No images provided");
         return;
       }
-
-      logger.info("[Chat-API-Logs] 🖼️ Processing images:", {
-        imageCount: imageParts.length
-      });
 
       // Generate caption using the processed image and user prompt
       logger.info("[Chat-API-Logs] 🎨 Starting caption generation...");
@@ -159,168 +268,4 @@ export async function generateCaption(
   });
 
   return { caption, description, transitionalComment };
-}
-
-// Interface defining the structure of processed form data
-interface FormData {
-  userPrompt: string; // The user's input text
-  prevPhotoDescription?: string; // Description of previous photo if any
-  personality: "yin" | "yang"; // Selected personality type
-  hasImages: boolean; // Flag indicating if images are present
-}
-
-// Process all form data including fields and files
-// This function handles the parsing and validation of form fields
-async function processFormData(bb: busboy.Busboy, rawBody: Buffer): Promise<FormData> {
-  logger.info("[Chat-API-Logs] 📝 Starting form data processing");
-  
-  // Initialize variables to store form data
-  let userPrompt = "";
-  let prevPhotoDescription: string | undefined;
-  let personality: "yin" | "yang" = "yin"; // Default to yin if not specified
-  let hasImages = false;
-
-  // Handle form fields
-  bb.on("field", (name: string, val: string) => {
-    logger.info(`[Chat-API-Logs] 📋 Processing field: ${name}`);
-    
-    if (name === "prompt") {
-      userPrompt = val;
-      logger.info("[Chat-API-Logs] - User prompt received:", { length: val.length });
-    } else if (name === "prevPhotoDescription") {
-      logger.info("[Chat-API-Logs] 📸 Previous photo description received:", { length: val.length });
-      prevPhotoDescription = val;
-    } else if (name === "personality") {
-      const requestedPersonality = val.toLowerCase() as "yin" | "yang";
-      if (requestedPersonality === "yin" || requestedPersonality === "yang") {
-        personality = requestedPersonality;
-        logger.info(`[Chat-API-Logs] 👤 Using personality: ${personality}`);
-      } else {
-        logger.warn(`[Chat-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`);
-      }
-    }
-  });
-
-  // Check for image files
-  bb.on("file", (name: string) => {
-    if (name === "images") {
-      hasImages = true;
-      logger.info("[Chat-API-Logs] 🖼️ Image file detected");
-    }
-  });
-
-  // End the busboy stream
-  bb.end(rawBody);
-
-  logger.info("[Chat-API-Logs] ✅ Form data processing complete", {
-    hasUserPrompt: !!userPrompt,
-    hasPrevDescription: !!prevPhotoDescription,
-    personality,
-    hasImages
-  });
-
-  return {
-    userPrompt,
-    prevPhotoDescription,
-    personality,
-    hasImages,
-  };
-}
-
-// Interface for processed images
-interface ProcessedImages {
-  imageParts: Part[];
-}
-
-// Process uploaded images
-async function processImages(
-  bb: busboy.Busboy,
-  rawBody: Buffer
-): Promise<ProcessedImages> {
-  logger.info("[Chat-API-Logs] 🖼️ Starting image processing");
-  
-  const imageParts: Part[] = [];
-  const filePromises: Promise<void>[] = [];
-
-  // Handle file uploads
-  bb.on(
-    "file",
-    (
-      name: string,
-      fileStream: Readable,
-      info: { filename: string; mimeType: string },
-    ) => {
-      if (name !== "images") {
-        logger.info(`[Chat-API-Logs] ⚠️ Skipping non-image file: ${name}`);
-        fileStream.resume();
-        return;
-      }
-
-      logger.info(`[Chat-API-Logs] 📤 Processing file:`, {
-        filename: info.filename,
-        mimeType: info.mimeType
-      });
-
-      // Validate image MIME types
-      const allowedMimeTypes = [
-        "image/jpeg",
-        "image/png",
-        "image/heif",
-        "image/webp",
-      ];
-      if (!allowedMimeTypes.includes(info.mimeType)) {
-        logger.warn(`[Chat-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`);
-        fileStream.resume();
-        return;
-      }
-
-      // Collect file chunks
-      const chunks: Buffer[] = [];
-      fileStream.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      // Process the file when upload is complete
-      filePromises.push(
-        new Promise<void>((resolve, reject) => {
-          fileStream.on("end", () => {
-            const buffer = Buffer.concat(chunks);
-            imageParts.push({
-              inlineData: {
-                mimeType: info.mimeType,
-                data: buffer.toString("base64"),
-              },
-            });
-            logger.info(`[Chat-API-Logs] ✅ File processed: ${info.filename}`);
-            resolve();
-          });
-          fileStream.on("error", (error) => {
-            logger.error(`[Chat-API-Logs] ❌ Error processing file: ${info.filename}`, error);
-            reject(error);
-          });
-        }),
-      );
-    },
-  );
-
-  // Wait for all files to be processed
-  await new Promise<void>((resolve, reject) => {
-    bb.on("finish", async () => {
-      try {
-        await Promise.all(filePromises);
-        logger.info(`[Chat-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`);
-        resolve();
-      } catch (error) {
-        logger.error("[Chat-API-Logs] ❌ Error processing files:", error);
-        reject(error);
-      }
-    });
-    bb.once("error", (error) => {
-      logger.error("[Chat-API-Logs] ❌ Busboy error:", error);
-      reject(error);
-    });
-  });
-
-  logger.info(`[Chat-API-Logs] ✅ Image processing complete. Processed ${imageParts.length} images`);
-  return { imageParts };
 }
