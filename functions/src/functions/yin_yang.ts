@@ -36,12 +36,11 @@ const personalityModels = {
 
 // Configure the generation parameters for the AI model
 // These settings control the creativity and output format of the model
-const generationConfig: GenerationConfig = {
-  temperature: 1.15, // Higher temperature for more creative responses
-  topP: 0.95, // Nucleus sampling parameter for response diversity
-  topK: 40, // Top-k sampling parameter for response quality
-  maxOutputTokens: 8192, // Maximum length of generated response
-  responseMimeType: "application/json", // Expect JSON response
+const baseGenerationConfig: GenerationConfig = {
+  topP: 0.95,
+  topK: 40,
+  maxOutputTokens: 8192,
+  responseMimeType: "application/json",
   responseSchema: {
     type: SchemaType.OBJECT,
     properties: {
@@ -53,6 +52,11 @@ const generationConfig: GenerationConfig = {
       },
     },
   },
+};
+
+const generationConfigs: Record<PersonalityType, GenerationConfig> = {
+  yin: { ...baseGenerationConfig, temperature: 1.0 },
+  yang: { ...baseGenerationConfig, temperature: 1.15 },
 };
 
 // Add types for the unified function
@@ -215,7 +219,7 @@ async function chatResponse(
   // This sets up the context for the AI's response
   logger.info(`[Chat-API-Logs] 🤖 Initializing ${personality} model chat session`);
   const chatSession = personalityModels[personality].startChat({
-    generationConfig,
+    generationConfig: generationConfigs[personality],
     history: chatHistory,
   });
 
