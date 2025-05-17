@@ -216,7 +216,6 @@ async function chatResponse(
   });
 
   // Initialize chat session with the appropriate personality model
-  // This sets up the context for the AI's response
   logger.info(`[Chat-API-Logs] 🤖 Initializing ${personality} model chat session`);
   const chatSession = personalityModels[personality].startChat({
     generationConfig: generationConfigs[personality],
@@ -224,18 +223,46 @@ async function chatResponse(
   });
 
   // Combine user prompt with any image parts
-  // This allows the model to process both text and images together
-  const messageParts: Part[] = [{ text: userPrompt }, ...imageParts];
+  const messageParts: Part[] = [];
+  if (userPrompt.trim()) {
+    messageParts.push({ text: userPrompt });
+  } else if (imageParts.length > 0) {
+    // Make the default prompt more specific to ensure better responses
+    messageParts.push({ text: "Describe what you see in this image in detail and provide thoughtful commentary." });
+  }
+  // Add image parts
+  messageParts.push(...imageParts);
+  
   logger.info("[Chat-API-Logs] 📝 Sending message to model", {
     textLength: userPrompt.length,
     imageCount: imageParts.length
   });
 
   // Get response from the AI model
-  // This generates the main response based on the input
   const llmResponse = await chatSession.sendMessage(messageParts);
   const responseText = llmResponse.response.text();
-  const responseJson = JSON.parse(responseText);
+  
+  // Handle potentially invalid JSON or empty responses
+  let responseJson: any;
+  try {
+    responseJson = JSON.parse(responseText);
+    
+    // Ensure bubbles is always an array, even if empty or undefined
+    if (!responseJson.bubbles) {
+      responseJson.bubbles = [];
+    }
+    
+    // If bubbles is empty but we have image parts, add a fallback response
+    if (Array.isArray(responseJson.bubbles) && responseJson.bubbles.length === 0 && imageParts.length > 0) {
+      responseJson.bubbles = ["... ummmmm"];
+    }
+  } catch (error) {
+    // If JSON parsing fails, create a valid response structure
+    logger.error("[Chat-API-Logs] ❌ Failed to parse response as JSON", error);
+    responseJson = { 
+      bubbles: ["I can see your image, but I'm having trouble processing it right now. Can you tell me what you'd like to know about it?"] 
+    };
+  }
 
   logger.info("[Chat-API-Logs] ✅ Chat response generated", {
     responseLength: responseText.length,
