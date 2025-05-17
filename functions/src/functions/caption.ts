@@ -21,9 +21,11 @@ interface ProcessedFormData {
 }
 
 // Process all form data including fields and files in a single function
-async function processFormDataAndImages(req: import('express').Request): Promise<ProcessedFormData> {
+async function processFormDataAndImages(
+  req: import("express").Request,
+): Promise<ProcessedFormData> {
   logger.info("[Chat-API-Logs] 📝 Starting form data processing");
-  
+
   return await new Promise((resolve, reject) => {
     const bb = busboy({ headers: req.headers });
     let userPrompt = "";
@@ -35,12 +37,16 @@ async function processFormDataAndImages(req: import('express').Request): Promise
     // Handle form fields
     bb.on("field", (name: string, val: string) => {
       logger.info(`[Chat-API-Logs] 📋 Processing field: ${name}`);
-      
+
       if (name === "prompt") {
         userPrompt = val;
-        logger.info("[Chat-API-Logs] - User prompt received:", { length: val.length });
+        logger.info("[Chat-API-Logs] - User prompt received:", {
+          length: val.length,
+        });
       } else if (name === "prevPhotoDescription") {
-        logger.info("[Chat-API-Logs] 📸 Previous photo description received:", { length: val.length });
+        logger.info("[Chat-API-Logs] 📸 Previous photo description received:", {
+          length: val.length,
+        });
         prevPhotoDescription = val;
       } else if (name === "personality") {
         const requestedPersonality = val.toLowerCase() as "yin" | "yang";
@@ -48,75 +54,93 @@ async function processFormDataAndImages(req: import('express').Request): Promise
           personality = requestedPersonality;
           logger.info(`[Chat-API-Logs] 👤 Using personality: ${personality}`);
         } else {
-          logger.warn(`[Chat-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`);
+          logger.warn(
+            `[Chat-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`,
+          );
         }
       }
     });
 
     // Handle file uploads
-    bb.on("file", (name: string, fileStream: Readable, info: { filename: string; mimeType: string }) => {
-      if (name !== "images") {
-        logger.info(`[Chat-API-Logs] ⚠️ Skipping non-image file: ${name}`);
-        fileStream.resume();
-        return;
-      }
+    bb.on(
+      "file",
+      (
+        name: string,
+        fileStream: Readable,
+        info: { filename: string; mimeType: string },
+      ) => {
+        if (name !== "images") {
+          logger.info(`[Chat-API-Logs] ⚠️ Skipping non-image file: ${name}`);
+          fileStream.resume();
+          return;
+        }
 
-      logger.info(`[Chat-API-Logs] 📤 Processing file:`, {
-        filename: info.filename,
-        mimeType: info.mimeType
-      });
+        logger.info(`[Chat-API-Logs] 📤 Processing file:`, {
+          filename: info.filename,
+          mimeType: info.mimeType,
+        });
 
-      // Validate image MIME types
-      const allowedMimeTypes = [
-        "image/jpeg",
-        "image/png",
-        "image/heif",
-        "image/webp",
-      ];
-      if (!allowedMimeTypes.includes(info.mimeType)) {
-        logger.warn(`[Chat-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`);
-        fileStream.resume();
-        return;
-      }
+        // Validate image MIME types
+        const allowedMimeTypes = [
+          "image/jpeg",
+          "image/png",
+          "image/heif",
+          "image/webp",
+        ];
+        if (!allowedMimeTypes.includes(info.mimeType)) {
+          logger.warn(
+            `[Chat-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`,
+          );
+          fileStream.resume();
+          return;
+        }
 
-      // Collect file chunks
-      const chunks: Buffer[] = [];
-      fileStream.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
+        // Collect file chunks
+        const chunks: Buffer[] = [];
+        fileStream.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
 
-      // Process the file when upload is complete
-      filePromises.push(
-        new Promise<void>((resolve, reject) => {
-          fileStream.on("end", () => {
-            const buffer = Buffer.concat(chunks);
-            imageParts.push({
-              inlineData: {
-                mimeType: info.mimeType,
-                data: buffer.toString("base64"),
-              },
+        // Process the file when upload is complete
+        filePromises.push(
+          new Promise<void>((resolve, reject) => {
+            fileStream.on("end", () => {
+              const buffer = Buffer.concat(chunks);
+              imageParts.push({
+                inlineData: {
+                  mimeType: info.mimeType,
+                  data: buffer.toString("base64"),
+                },
+              });
+              logger.info(
+                `[Chat-API-Logs] ✅ File processed: ${info.filename}`,
+              );
+              resolve();
             });
-            logger.info(`[Chat-API-Logs] ✅ File processed: ${info.filename}`);
-            resolve();
-          });
-          fileStream.on("error", (error) => {
-            logger.error(`[Chat-API-Logs] ❌ Error processing file: ${info.filename}`, error);
-            reject(error);
-          });
-        }),
-      );
-    });
+            fileStream.on("error", (error) => {
+              logger.error(
+                `[Chat-API-Logs] ❌ Error processing file: ${info.filename}`,
+                error,
+              );
+              reject(error);
+            });
+          }),
+        );
+      },
+    );
 
     // Handle completion
     bb.on("finish", async () => {
       try {
         await Promise.all(filePromises);
-        logger.info(`[Chat-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`);
+        logger.info(
+          `[Chat-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`,
+        );
         resolve({
           userPrompt,
           prevPhotoDescription,
           personality,
-          imageParts
+          imageParts,
         });
       } catch (error) {
         logger.error("[Chat-API-Logs] ❌ Error processing files:", error);
@@ -139,7 +163,7 @@ export const caption = onRequest(
   async (req, res) => {
     logger.info("[Chat-API-Logs] 🚀 Caption endpoint called", {
       method: req.method,
-      path: req.path
+      path: req.path,
     });
 
     // Only allow POST requests
@@ -157,14 +181,14 @@ export const caption = onRequest(
     try {
       // Process form data and images in a single step
       logger.info("[Chat-API-Logs] 📝 Processing form data and images...");
-      const { userPrompt, prevPhotoDescription, personality, imageParts } = 
+      const { userPrompt, prevPhotoDescription, personality, imageParts } =
         await processFormDataAndImages(req);
 
       logger.info("[Chat-API-Logs] 📦 Form data processed:", {
         hasUserPrompt: !!userPrompt,
         hasPrevDescription: !!prevPhotoDescription,
         personality,
-        imageCount: imageParts.length
+        imageCount: imageParts.length,
       });
 
       // Validate that at least one image was provided
@@ -176,17 +200,18 @@ export const caption = onRequest(
 
       // Generate caption using the processed image and user prompt
       logger.info("[Chat-API-Logs] 🎨 Starting caption generation...");
-      const { caption, description, transitionalComment } = await generateCaption(
-        imageParts, 
-        userPrompt,
-        personality,
-        prevPhotoDescription
-      );
+      const { caption, description, transitionalComment } =
+        await generateCaption(
+          imageParts,
+          userPrompt,
+          personality,
+          prevPhotoDescription,
+        );
 
       logger.info("[Chat-API-Logs] ✅ Caption generation complete:", {
         captionLength: caption.length,
         descriptionLength: description.length,
-        hasTransitionalComment: !!transitionalComment
+        hasTransitionalComment: !!transitionalComment,
       });
 
       // Return the generated caption, description, and transitional comment as JSON
@@ -206,17 +231,24 @@ export async function generateCaption(
   userPrompt: string,
   personality: "yin" | "yang" = "yin",
   prevPhotoDescription?: string,
-): Promise<{ caption: string; description: string; transitionalComment?: string }> {
+): Promise<{
+  caption: string;
+  description: string;
+  transitionalComment?: string;
+}> {
   logger.info("[Chat-API-Logs] 🎨 Starting caption generation", {
     personality,
     hasPrevDescription: !!prevPhotoDescription,
     prevPhotoDescription: prevPhotoDescription || "none provided",
     imageCount: imageParts.length,
-    promptLength: userPrompt.length
+    promptLength: userPrompt.length,
   });
 
   // Initialize the appropriate model based on personality
-  logger.info("[Chat-API-Logs] 🤖 Initializing model for personality:", personality);
+  logger.info(
+    "[Chat-API-Logs] 🤖 Initializing model for personality:",
+    personality,
+  );
   const model = genaiClient.getGenerativeModel({
     model: "gemini-2.0-flash",
     systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt(personality)}`,
@@ -243,10 +275,20 @@ export async function generateCaption(
   // If we have a previous photo description, generate a transitional comment
   let transitionalComment: string | undefined;
   if (prevPhotoDescription) {
-    logger.info("[Chat-API-Logs] 🔄 Generating transitional comment for previous photo:", { prevPhotoDescription });
-    const transitionPrompt = personality === "yin" 
-      ? loadPrompt("yin_transition").replace("{prevPhotoDescription}", prevPhotoDescription)
-      : loadPrompt("yang_transition").replace("{prevPhotoDescription}", prevPhotoDescription);
+    logger.info(
+      "[Chat-API-Logs] 🔄 Generating transitional comment for previous photo:",
+      { prevPhotoDescription },
+    );
+    const transitionPrompt =
+      personality === "yin"
+        ? loadPrompt("yin_transition").replace(
+            "{prevPhotoDescription}",
+            prevPhotoDescription,
+          )
+        : loadPrompt("yang_transition").replace(
+            "{prevPhotoDescription}",
+            prevPhotoDescription,
+          );
 
     const transitionResult = await model.generateContent([
       { text: transitionPrompt },
@@ -254,7 +296,9 @@ export async function generateCaption(
     ]);
 
     transitionalComment = (await transitionResult.response).text();
-    logger.info("[Chat-API-Logs] ✨ Generated transitional comment:", { transitionalComment });
+    logger.info("[Chat-API-Logs] ✨ Generated transitional comment:", {
+      transitionalComment,
+    });
   }
 
   const caption = (await captionResult.response).text();
@@ -264,7 +308,7 @@ export async function generateCaption(
     caption,
     description,
     hasTransitionalComment: !!transitionalComment,
-    ...(transitionalComment && { transitionalComment })  // Only include if it exists
+    ...(transitionalComment && { transitionalComment }), // Only include if it exists
   });
 
   return { caption, description, transitionalComment };

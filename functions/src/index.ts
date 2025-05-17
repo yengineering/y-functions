@@ -1,13 +1,13 @@
 import "./admin";
 import { setGlobalOptions } from "firebase-functions/v2";
-import { yin_yang } from "./functions/yin_yang";
+import { yinYang } from "./functions/yinYang";
 import { myVibe } from "./functions/myVibe";
 import { percentage } from "./functions/percentage";
 import { caption } from "./functions/caption";
 import { handleDeletedPhoto } from "./functions/handleDeletedPhoto";
 import "dotenv/config";
 
-export { yin_yang, myVibe, percentage, caption, handleDeletedPhoto };
+export { yinYang, myVibe, percentage, caption, handleDeletedPhoto };
 
 /*
  * Required API keys in ../.env:

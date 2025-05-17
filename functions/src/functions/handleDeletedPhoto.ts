@@ -23,21 +23,27 @@ async function generateTransitionalCommentForDeletion(
   deletedPhotoDescription: string,
   previousPhotoDescription: string,
   nextPhotoDescription: string,
-  personality: "yin" | "yang" = "yin"
+  personality: "yin" | "yang" = "yin",
 ): Promise<string> {
-  logger.info("[Photo-Deletion-Logs] 🔄 Generating transitional comment for deleted photo", {
-    personality,
-    deletedPhotoDescription,
-    previousPhotoDescription,
-    nextPhotoDescription
-  });
+  logger.info(
+    "[Photo-Deletion-Logs] 🔄 Generating transitional comment for deleted photo",
+    {
+      personality,
+      deletedPhotoDescription,
+      previousPhotoDescription,
+      nextPhotoDescription,
+    },
+  );
 
   const model = personality === "yin" ? yinModel : yangModel;
-  logger.info("[Photo-Deletion-Logs] Using model for personality: " + personality);
+  logger.info(
+    "[Photo-Deletion-Logs] Using model for personality: " + personality,
+  );
 
   // Create a prompt that includes all three descriptions
-  const transitionPrompt = personality === "yin"
-    ? `You're looking at two photos in sequence. The first shows: "${previousPhotoDescription}". The next photo shows: "${nextPhotoDescription}".
+  const transitionPrompt =
+    personality === "yin"
+      ? `You're looking at two photos in sequence. The first shows: "${previousPhotoDescription}". The next photo shows: "${nextPhotoDescription}".
 
 Write ONE short, witty line connecting the first and next photos. Be subtle and ethereal, like you're noticing a deeper pattern or cosmic connection.
 
@@ -48,7 +54,7 @@ Examples:
 - Went from forest bathing to city racing, still got that spiritual cardio
 
 Keep it short, mystical, and a little funny. ONE line only.`
-    : `You're looking at two photos in sequence. The first shows: "${previousPhotoDescription}". The next photo shows: "${nextPhotoDescription}".
+      : `You're looking at two photos in sequence. The first shows: "${previousPhotoDescription}". The next photo shows: "${nextPhotoDescription}".
 
 Write ONE short, witty line connecting the first and next photos. Be bold and confident, with a touch of humor.
 
@@ -62,11 +68,13 @@ Keep it short, bold, and a little funny. ONE line only.`;
 
   logger.info("[Photo-Deletion-Logs] Sending prompt to model...");
   const transitionResult = await model.generateContent([
-    { text: transitionPrompt }
+    { text: transitionPrompt },
   ]);
 
   const transitionalComment = (await transitionResult.response).text();
-  logger.info("[Photo-Deletion-Logs] ✨ Generated transitional comment:", { transitionalComment });
+  logger.info("[Photo-Deletion-Logs] ✨ Generated transitional comment:", {
+    transitionalComment,
+  });
 
   return transitionalComment;
 }
@@ -77,12 +85,14 @@ export const handleDeletedPhoto = onRequest(
   async (req, res) => {
     logger.info("[Photo-Deletion-Logs] 🎯 HandleDeletedPhoto endpoint called", {
       method: req.method,
-      path: req.path
+      path: req.path,
     });
 
     // Only allow POST requests
     if (req.method !== "POST") {
-      logger.warn("[Photo-Deletion-Logs] ❌ Method not allowed:", { method: req.method });
+      logger.warn("[Photo-Deletion-Logs] ❌ Method not allowed:", {
+        method: req.method,
+      });
       res.status(405).send("Method not allowed");
       return;
     }
@@ -91,44 +101,60 @@ export const handleDeletedPhoto = onRequest(
       // Parse the request body
       const body = req.body;
       logger.info("[Photo-Deletion-Logs] Received request body:", { body });
-      
+
       // Extract the required fields
-      const { 
+      const {
         deletedPhotoDescription,
         previousPhotoDescription,
         nextPhotoDescription,
-        personality = "yin" // Default to yin if not specified
+        personality = "yin", // Default to yin if not specified
       } = body;
 
       // Validate required fields
-      if (!deletedPhotoDescription || !previousPhotoDescription || !nextPhotoDescription) {
+      if (
+        !deletedPhotoDescription ||
+        !previousPhotoDescription ||
+        !nextPhotoDescription
+      ) {
         logger.warn("[Photo-Deletion-Logs] ❌ Missing required fields:", {
           hasDeletedDescription: !!deletedPhotoDescription,
           hasPreviousDescription: !!previousPhotoDescription,
-          hasNextDescription: !!nextPhotoDescription
+          hasNextDescription: !!nextPhotoDescription,
         });
-        res.status(400).send("Missing required fields: deletedPhotoDescription, previousPhotoDescription, and nextPhotoDescription are required");
+        res
+          .status(400)
+          .send(
+            "Missing required fields: deletedPhotoDescription, previousPhotoDescription, and nextPhotoDescription are required",
+          );
         return;
       }
 
-      logger.info("[Photo-Deletion-Logs] ✅ All required fields present, generating transitional comment...");
-      
+      logger.info(
+        "[Photo-Deletion-Logs] ✅ All required fields present, generating transitional comment...",
+      );
+
       // Generate the transitional comment
       const transitionalComment = await generateTransitionalCommentForDeletion(
         deletedPhotoDescription,
         previousPhotoDescription,
         nextPhotoDescription,
-        personality
+        personality,
       );
 
-      logger.info("[Photo-Deletion-Logs] ✅ Successfully generated transitional comment:", { transitionalComment });
+      logger.info(
+        "[Photo-Deletion-Logs] ✅ Successfully generated transitional comment:",
+        { transitionalComment },
+      );
 
       // Return the generated transitional comment
       res.json({ transitionalComment });
     } catch (error) {
       // Handle any errors during processing
-      logger.error("[Photo-Deletion-Logs] ❌ Error in handleDeletedPhoto endpoint:", error);
+      logger.error(
+        "[Photo-Deletion-Logs] ❌ Error in handleDeletedPhoto endpoint:",
+        error,
+      );
       res.status(500).send("Error generating transitional comment");
     }
-  }
-); 
+  },
+);

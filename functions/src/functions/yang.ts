@@ -235,7 +235,12 @@ export const yang = onRequest(
       const [llmResponse, captionResult] = await Promise.all([
         chatSession.sendMessage(messageParts),
         imageParts.length > 0
-          ? generateCaption(imageParts, userPrompt, "yang", prevPhotoDescription).catch((error) => {
+          ? generateCaption(
+              imageParts,
+              userPrompt,
+              "yang",
+              prevPhotoDescription,
+            ).catch((error) => {
               logger.error("Error generating caption:", error);
               return undefined;
             })

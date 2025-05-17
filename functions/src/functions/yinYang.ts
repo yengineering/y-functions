@@ -69,12 +69,12 @@ interface UnifiedFormData {
 
 // Main endpoint handler for processing yin/yang personality requests
 // This function handles both text and image-based interactions
-export const yin_yang = onRequest(
+export const yinYang = onRequest(
   { allowUnparsed: true } as CustomHttpsOptions,
   async (req, res) => {
     logger.info("[Chat-API-Logs] 🚀 Yin/Yang endpoint called", {
       method: req.method,
-      path: req.path
+      path: req.path,
     });
 
     // Only allow POST requests for security
@@ -92,29 +92,43 @@ export const yin_yang = onRequest(
 
     try {
       logger.info("[Chat-API-Logs] 📝 Starting form data processing");
-      const { userPrompt, chatHistory, personality, imageParts }: UnifiedFormData = await processFormDataAndImages(req);
+      const {
+        userPrompt,
+        chatHistory,
+        personality,
+        imageParts,
+      }: UnifiedFormData = await processFormDataAndImages(req);
       logger.info("[Chat-API-Logs] 📦 Form data processed:", {
         hasUserPrompt: !!userPrompt,
         chatHistoryLength: chatHistory.length,
         personality,
-        imageCount: imageParts.length
+        imageCount: imageParts.length,
       });
       logger.info("[Chat-API-Logs] 🖼️ Image processing complete:", {
-        imageCount: imageParts.length
+        imageCount: imageParts.length,
       });
       // Get chat response and handle the response
       logger.info("[Chat-API-Logs] 💭 Starting chat response generation");
-      const { responseText, responseJson } = await chatResponse(personality, chatHistory, userPrompt, imageParts);
+      const { responseText, responseJson } = await chatResponse(
+        personality,
+        chatHistory,
+        userPrompt,
+        imageParts,
+      );
 
       // Log the responses for debugging and monitoring
       logger.info("[Chat-API-Logs] 📝 Raw Gemini Response Text:", responseText);
       logger.info("[Chat-API-Logs] 📦 Parsed response JSON:", {
-        bubbleCount: responseJson.bubbles?.length || 0
+        bubbleCount: responseJson.bubbles?.length || 0,
       });
 
       // Send the response back to the client
       res.json({
-        bubbles: Array.isArray(responseJson.bubbles) ? responseJson.bubbles : (responseJson.bubbles ? [responseJson.bubbles] : [])
+        bubbles: Array.isArray(responseJson.bubbles)
+          ? responseJson.bubbles
+          : responseJson.bubbles
+            ? [responseJson.bubbles]
+            : [],
       });
       logger.info("[Chat-API-Logs] ✅ Response sent successfully");
     } catch (error) {
@@ -125,10 +139,12 @@ export const yin_yang = onRequest(
 );
 
 // Replace processFormData and processImages with a single unified function
-async function processFormDataAndImages(req: import('express').Request): Promise<UnifiedFormData> {
+async function processFormDataAndImages(
+  req: import("express").Request,
+): Promise<UnifiedFormData> {
   return await new Promise((resolve, reject) => {
     const bb = busboy({ headers: req.headers });
-    let userPrompt: string = "";
+    let userPrompt = "";
     let chatHistory: any[] = [];
     let personality: PersonalityType = "yin";
     const imageParts: any[] = [];
@@ -145,12 +161,26 @@ async function processFormDataAndImages(req: import('express').Request): Promise
       } else if (name === "history") {
         try {
           chatHistory = JSON.parse(val);
-          if (!Array.isArray(chatHistory) || !chatHistory.every(item => typeof item === "object" && item !== null && "role" in item && "parts" in item)) {
+          if (
+            !Array.isArray(chatHistory) ||
+            !chatHistory.every(
+              (item) =>
+                typeof item === "object" &&
+                item !== null &&
+                "role" in item &&
+                "parts" in item,
+            )
+          ) {
             throw new Error("History must be an array of Content objects");
           }
-          chatHistory = chatHistory.map(item => ({ ...item, role: item.role === "assistant" ? "model" : item.role }));
+          chatHistory = chatHistory.map((item) => ({
+            ...item,
+            role: item.role === "assistant" ? "model" : item.role,
+          }));
           if (chatHistory.length > 0 && chatHistory[0].role === "model") {
-            chatHistory = chatHistory.filter((item, index) => !(index === 0 && item.role === "model"));
+            chatHistory = chatHistory.filter(
+              (item, index) => !(index === 0 && item.role === "model"),
+            );
           }
           if (chatHistory.length === 0 || chatHistory[0].role !== "user") {
             chatHistory.unshift({ role: "user", parts: [{ text: "Hello" }] });
@@ -161,31 +191,45 @@ async function processFormDataAndImages(req: import('express').Request): Promise
       }
     });
 
-    bb.on("file", (name: string, fileStream: import('stream').Readable, info: { filename: string; mimeType: string }) => {
-      if (name !== "images") {
-        fileStream.resume();
-        return;
-      }
-      const allowedMimeTypes = ["image/jpeg", "image/png", "image/heif", "image/webp"];
-      if (!allowedMimeTypes.includes(info.mimeType)) {
-        fileStream.resume();
-        return;
-      }
-      const chunks: Buffer[] = [];
-      fileStream.on("data", (chunk: Buffer) => chunks.push(chunk));
-      filePromises.push(new Promise<void>((res, rej) => {
-        fileStream.on("end", () => {
-          imageParts.push({
-            inlineData: {
-              mimeType: info.mimeType,
-              data: Buffer.concat(chunks).toString("base64"),
-            },
-          });
-          res();
-        });
-        fileStream.on("error", rej);
-      }));
-    });
+    bb.on(
+      "file",
+      (
+        name: string,
+        fileStream: import("stream").Readable,
+        info: { filename: string; mimeType: string },
+      ) => {
+        if (name !== "images") {
+          fileStream.resume();
+          return;
+        }
+        const allowedMimeTypes = [
+          "image/jpeg",
+          "image/png",
+          "image/heif",
+          "image/webp",
+        ];
+        if (!allowedMimeTypes.includes(info.mimeType)) {
+          fileStream.resume();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        fileStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        filePromises.push(
+          new Promise<void>((res, rej) => {
+            fileStream.on("end", () => {
+              imageParts.push({
+                inlineData: {
+                  mimeType: info.mimeType,
+                  data: Buffer.concat(chunks).toString("base64"),
+                },
+              });
+              res();
+            });
+            fileStream.on("error", rej);
+          }),
+        );
+      },
+    );
 
     bb.on("finish", async () => {
       try {
@@ -206,17 +250,19 @@ async function chatResponse(
   personality: PersonalityType,
   chatHistory: Content[],
   userPrompt: string,
-  imageParts: Part[]
+  imageParts: Part[],
 ): Promise<{ responseText: string; responseJson: any }> {
   logger.info("[Chat-API-Logs] 💭 Starting chat response generation", {
     personality,
     chatHistoryLength: chatHistory.length,
     promptLength: userPrompt.length,
-    imageCount: imageParts.length
+    imageCount: imageParts.length,
   });
 
   // Initialize chat session with the appropriate personality model
-  logger.info(`[Chat-API-Logs] 🤖 Initializing ${personality} model chat session`);
+  logger.info(
+    `[Chat-API-Logs] 🤖 Initializing ${personality} model chat session`,
+  );
   const chatSession = personalityModels[personality].startChat({
     generationConfig: generationConfigs[personality],
     history: chatHistory,
@@ -228,45 +274,53 @@ async function chatResponse(
     messageParts.push({ text: userPrompt });
   } else if (imageParts.length > 0) {
     // Make the default prompt more specific to ensure better responses
-    messageParts.push({ text: "Describe what you see in this image in detail and provide thoughtful commentary." });
+    messageParts.push({
+      text: "Describe what you see in this image in detail and provide thoughtful commentary.",
+    });
   }
   // Add image parts
   messageParts.push(...imageParts);
-  
+
   logger.info("[Chat-API-Logs] 📝 Sending message to model", {
     textLength: userPrompt.length,
-    imageCount: imageParts.length
+    imageCount: imageParts.length,
   });
 
   // Get response from the AI model
   const llmResponse = await chatSession.sendMessage(messageParts);
   const responseText = llmResponse.response.text();
-  
+
   // Handle potentially invalid JSON or empty responses
   let responseJson: any;
   try {
     responseJson = JSON.parse(responseText);
-    
+
     // Ensure bubbles is always an array, even if empty or undefined
     if (!responseJson.bubbles) {
       responseJson.bubbles = [];
     }
-    
+
     // If bubbles is empty but we have image parts, add a fallback response
-    if (Array.isArray(responseJson.bubbles) && responseJson.bubbles.length === 0 && imageParts.length > 0) {
+    if (
+      Array.isArray(responseJson.bubbles) &&
+      responseJson.bubbles.length === 0 &&
+      imageParts.length > 0
+    ) {
       responseJson.bubbles = ["... ummmmm"];
     }
   } catch (error) {
     // If JSON parsing fails, create a valid response structure
     logger.error("[Chat-API-Logs] ❌ Failed to parse response as JSON", error);
-    responseJson = { 
-      bubbles: ["I can see your image, but I'm having trouble processing it right now. Can you tell me what you'd like to know about it?"] 
+    responseJson = {
+      bubbles: [
+        "I can see your image, but I'm having trouble processing it right now. Can you tell me what you'd like to know about it?",
+      ],
     };
   }
 
   logger.info("[Chat-API-Logs] ✅ Chat response generated", {
     responseLength: responseText.length,
-    bubbleCount: responseJson.bubbles?.length || 0
+    bubbleCount: responseJson.bubbles?.length || 0,
   });
 
   return { responseText, responseJson };
