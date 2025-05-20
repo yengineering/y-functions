@@ -225,7 +225,33 @@ export const caption = onRequest(
   },
 );
 
-// Utility function for generating captions
+// Add this helper function for retrying content generation
+async function generateContentWithRetry(
+  model: any,
+  parts: any[],
+  maxRetries: number = 3,
+  retryDelay: number = 1000
+): Promise<any> {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      logger.info(`[Chat-API-Logs] 🔄 Generation attempt ${attempt}/${maxRetries}`);
+      const result = await model.generateContent(parts);
+      return result;
+    } catch (error) {
+      lastError = error;
+      logger.warn(`[Chat-API-Logs] ⚠️ Generation attempt ${attempt} failed:`, error);
+      
+      if (attempt < maxRetries) {
+        logger.info(`[Chat-API-Logs] 😴 Waiting ${retryDelay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// Modify the generateCaption function
 export async function generateCaption(
   imageParts: Part[],
   userPrompt: string,
@@ -236,43 +262,41 @@ export async function generateCaption(
   description: string;
   transitionalComment?: string;
 }> {
+  const effectivePrompt = userPrompt.trim() || "Please generate a natural, engaging caption for this image that captures its essence and meaning.";
+
   logger.info("[Chat-API-Logs] 🎨 Starting caption generation", {
     personality,
     hasPrevDescription: !!prevPhotoDescription,
     prevPhotoDescription: prevPhotoDescription || "none provided",
     imageCount: imageParts.length,
-    promptLength: userPrompt.length,
+    promptLength: effectivePrompt.length,
+    isDefaultPrompt: !userPrompt.trim(),
   });
 
-  // Initialize the appropriate model based on personality
-  logger.info(
-    "[Chat-API-Logs] 🤖 Initializing model for personality:",
-    personality,
-  );
   const model = genaiClient.getGenerativeModel({
     model: "gemini-2.0-flash",
     systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt(personality)}`,
   });
 
-  // Generate the social media caption
+  // Generate the social media caption with retry mechanism
   logger.info("[Chat-API-Logs] 📝 Generating social media caption...");
-  const captionResult = await model.generateContent([
+  const captionResult = await generateContentWithRetry(model, [
     {
-      text: `${loadPrompt("caption")}\n\nContext from user: ${userPrompt}`,
+      text: `${loadPrompt("caption")}\n\nContext from user: ${effectivePrompt}`,
     },
     ...imageParts,
   ]);
 
-  // Generate a plain description
+  // Generate a plain description with retry mechanism
   logger.info("[Chat-API-Logs] 📋 Generating plain description...");
-  const descriptionResult = await model.generateContent([
+  const descriptionResult = await generateContentWithRetry(model, [
     {
       text: `Describe this image in one simple, factual sentence. Focus on what is literally in the image without any style or personality.`,
     },
     ...imageParts,
   ]);
 
-  // If we have a previous photo description, generate a transitional comment
+  // Handle transitional comment with retry mechanism if needed
   let transitionalComment: string | undefined;
   if (prevPhotoDescription) {
     logger.info(
@@ -290,7 +314,7 @@ export async function generateCaption(
             prevPhotoDescription,
           );
 
-    const transitionResult = await model.generateContent([
+    const transitionResult = await generateContentWithRetry(model, [
       { text: transitionPrompt },
       ...imageParts,
     ]);
@@ -308,7 +332,7 @@ export async function generateCaption(
     caption,
     description,
     hasTransitionalComment: !!transitionalComment,
-    ...(transitionalComment && { transitionalComment }), // Only include if it exists
+    ...(transitionalComment && { transitionalComment }),
   });
 
   return { caption, description, transitionalComment };
