@@ -16,7 +16,14 @@ import { loadPrompt } from "../utils/loadPrompt";
 // Extend HttpsOptions to allow unparsed request bodies for file uploads
 interface CustomHttpsOptions extends HttpsOptions {
   allowUnparsed: boolean;
+  timeoutSeconds: number;
 }
+
+// Retry configuration (Primary 2.0 Flash, Fallback 2.5 Flash)
+const RETRY_DELAY_MS = 1000; // 1 second
+const MAX_PRIMARY_RETRIES = 3;
+const MAX_FALLBACK_RETRIES = 10;
+const FAILURE_RESPONSE = "... ummmmm";
 
 // Define the possible personality types for the AI model
 type PersonalityType = "yin" | "yang";
@@ -24,14 +31,26 @@ type PersonalityType = "yin" | "yang";
 // Initialize personality-specific models with their respective system instructions
 // Each model uses the same base model but with different personality prompts
 const personalityModels = {
-  yin: genaiClient.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
-  }),
-  yang: genaiClient.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
-  }),
+  yin: {
+    primary: genaiClient.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
+    }),
+    fallback: genaiClient.getGenerativeModel({
+      model: "gemini-2.5-flash-preview-05-20",
+      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
+    }),
+  },
+  yang: {
+    primary: genaiClient.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
+    }),
+    fallback: genaiClient.getGenerativeModel({
+      model: "gemini-2.5-flash-preview-05-20",
+      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
+    }),
+  },
 };
 
 // Configure the generation parameters for the AI model
@@ -67,10 +86,16 @@ interface UnifiedFormData {
   imageParts: any[];
 }
 
+// Helper function to wait between retries
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Main endpoint handler for processing yin/yang personality requests
 // This function handles both text and image-based interactions
 export const yinYang = onRequest(
-  { allowUnparsed: true } as CustomHttpsOptions,
+  { 
+    allowUnparsed: true,
+    timeoutSeconds: 540, // extennded to 9 minutes (maximum allowed for HTTP functions)
+  } as CustomHttpsOptions,
   async (req, res) => {
     logger.info("[Chat-API-Logs] 🚀 Yin/Yang endpoint called", {
       method: req.method,
@@ -155,6 +180,7 @@ async function processFormDataAndImages(
         userPrompt = val;
       } else if (name === "personality") {
         const requestedPersonality = val.toLowerCase() as PersonalityType;
+        logger.info(`[Personality] Received personality type from request: ${requestedPersonality}`);
         if (requestedPersonality === "yin" || requestedPersonality === "yang") {
           personality = requestedPersonality;
         }
@@ -245,7 +271,6 @@ async function processFormDataAndImages(
 }
 
 // Generate a chat response using the specified personality model
-// This function handles the chat session initialization and message generation
 async function chatResponse(
   personality: PersonalityType,
   chatHistory: Content[],
@@ -259,26 +284,15 @@ async function chatResponse(
     imageCount: imageParts.length,
   });
 
-  // Initialize chat session with the appropriate personality model
-  logger.info(
-    `[Chat-API-Logs] 🤖 Initializing ${personality} model chat session`,
-  );
-  const chatSession = personalityModels[personality].startChat({
-    generationConfig: generationConfigs[personality],
-    history: chatHistory,
-  });
-
   // Combine user prompt with any image parts
   const messageParts: Part[] = [];
   if (userPrompt.trim()) {
     messageParts.push({ text: userPrompt });
   } else if (imageParts.length > 0) {
-    // Make the default prompt more specific to ensure better responses
     messageParts.push({
       text: "Describe what you see in this image in detail and provide thoughtful commentary.",
     });
   }
-  // Add image parts
   messageParts.push(...imageParts);
 
   logger.info("[Chat-API-Logs] 📝 Sending message to model", {
@@ -286,42 +300,97 @@ async function chatResponse(
     imageCount: imageParts.length,
   });
 
-  // Get response from the AI model
+  // Primary model retry logic
+  let primaryRetries = 0;
+
+  while (primaryRetries < MAX_PRIMARY_RETRIES) {
+    try {
+      return await invokeLLM(personality, chatHistory, messageParts, 'primary');
+    } catch (error: any) {
+      if (error.status === 503) {
+        primaryRetries++;
+        logger.warn(
+          `[Chat-API-Logs] ⚠️ Primary model overloaded. Retrying (${primaryRetries}/${MAX_PRIMARY_RETRIES})...`
+        );
+        await wait(RETRY_DELAY_MS * primaryRetries); // Exponential backoff
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // If primary model fails, try fallback model
+  logger.warn(
+    "[Chat-API-Logs] 🚨 Primary model failed. Switching to fallback model ('gemini-2.5-flash-preview-05-20')."
+  );
+
+  // Fallback model retry logic
+  let fallbackRetries = 0;
+
+  while (fallbackRetries < MAX_FALLBACK_RETRIES) {
+    try {
+      return await invokeLLM(personality, chatHistory, messageParts, 'fallback');
+    } catch (error: any) {
+      if (error.status === 503) {
+        fallbackRetries++;
+        logger.warn(
+          `[Chat-API-Logs] ⚠️ Fallback model overloaded. Retrying (${fallbackRetries}/${MAX_FALLBACK_RETRIES})...`
+        );
+        await wait(RETRY_DELAY_MS); // Constant delay for fallback
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // If we've exhausted all fallback retries, return the umm message
+  logger.error("[Chat-API-Logs] ❌ All fallback retries failed. Returning fallback message.");
+  return {
+    responseText: JSON.stringify({ bubbles: [FAILURE_RESPONSE] }),
+    responseJson: { bubbles: [FAILURE_RESPONSE] }
+  };
+}
+
+// Helper function to invoke LLM
+async function invokeLLM(
+  personality: PersonalityType,
+  chatHistory: Content[],
+  messageParts: Part[],
+  modelType: 'primary' | 'fallback'
+): Promise<{ responseText: string; responseJson: any }> {
+  logger.info(
+    `[Chat-API-Logs] 🤖 Attempting ${modelType} model`
+  );
+  const chatSession = personalityModels[personality][modelType].startChat({
+    generationConfig: generationConfigs[personality],
+    history: chatHistory,
+  });
   const llmResponse = await chatSession.sendMessage(messageParts);
   const responseText = llmResponse.response.text();
-
-  // Handle potentially invalid JSON or empty responses
   let responseJson: any;
   try {
     responseJson = JSON.parse(responseText);
-
-    // Ensure bubbles is always an array, even if empty or undefined
     if (!responseJson.bubbles) {
       responseJson.bubbles = [];
     }
-
-    // If bubbles is empty but we have image parts, add a fallback response
+    // If the response is empty and there are image parts, return the failure response:
     if (
       Array.isArray(responseJson.bubbles) &&
-      responseJson.bubbles.length === 0 &&
-      imageParts.length > 0
+      responseJson.bubbles.length === 0 
+      // && messageParts.some(part => 'inlineData' in part)
     ) {
-      responseJson.bubbles = ["... ummmmm"];
+      responseJson.bubbles = [FAILURE_RESPONSE];
     }
   } catch (error) {
-    // If JSON parsing fails, create a valid response structure
-    logger.error("[Chat-API-Logs] ❌ Failed to parse response as JSON", error);
+    logger.error(`[Chat-API-Logs] ❌ Failed to parse ${modelType} response as JSON`, error);
     responseJson = {
       bubbles: [
         "I can see your image, but I'm having trouble processing it right now. Can you tell me what you'd like to know about it?",
       ],
     };
   }
-
-  logger.info("[Chat-API-Logs] ✅ Chat response generated", {
+  logger.info(`[Chat-API-Logs] ✅ ${modelType} model succeeded.`, {
     responseLength: responseText.length,
-    bubbleCount: responseJson.bubbles?.length || 0,
   });
-
   return { responseText, responseJson };
 }
