@@ -19,11 +19,6 @@ interface CustomHttpsOptions extends HttpsOptions {
   timeoutSeconds: number;
 }
 
-// Retry configuration (Primary 2.0 Flash, Fallback 2.5 Flash)
-const RETRY_DELAY_MS = 1000; // 1 second
-const MAX_PRIMARY_RETRIES = 3;
-const MAX_FALLBACK_RETRIES = 10;
-const FAILURE_RESPONSE = "... ummmmm";
 
 // Define the possible personality types for the AI model
 type PersonalityType = "yin" | "yang";
@@ -163,31 +158,38 @@ async function processFormDataAndImages(
         }
       } else if (name === "history") {
         try {
-          chatHistory = JSON.parse(val);
-          if (
-            !Array.isArray(chatHistory) ||
-            !chatHistory.every(
-              (item) =>
-                typeof item === "object" &&
-                item !== null &&
-                "role" in item &&
-                "parts" in item,
-            )
-          ) {
-            throw new Error("History must be an array of Content objects");
+          const rawHistory = JSON.parse(val);
+          if (!Array.isArray(rawHistory)) {
+            throw new Error("History must be an array");
           }
-          chatHistory = chatHistory.map((item) => ({
-            ...item,
-            role: item.role === "assistant" ? "model" : item.role,
-          }));
-          if (chatHistory.length > 0 && chatHistory[0].role === "model") {
-            chatHistory = chatHistory.filter(
-              (item, index) => !(index === 0 && item.role === "model"),
-            );
-          }
+          
+          // Convert to Gemini format while preserving personality info for our analysis
+          chatHistory = rawHistory
+            .filter(msg => msg.parts?.[0]?.text) // Only messages with text content
+            .map((msg) => {
+              // Store personality info separately for our analysis
+              const personalityInfo = msg.personality;
+              
+              // Create clean Gemini-compatible format
+              const cleanMsg = {
+                role: msg.role === "assistant" ? "model" : msg.role,
+                parts: msg.parts
+              };
+              
+              // Add our metadata (not sent to Gemini, just used for logging/analysis)
+              if (personalityInfo) {
+                (cleanMsg as any)._personality = personalityInfo; // Use underscore to avoid conflicts
+              }
+              
+              return cleanMsg;
+            });
+          
+          // Add dummy user message if needed
           if (chatHistory.length === 0 || chatHistory[0].role !== "user") {
             chatHistory.unshift({ role: "user", parts: [{ text: "Hello" }] });
           }
+          
+          logger.info(`[History-Processing] Processed ${chatHistory.length} messages from unified chat with personality info`);
         } catch (error) {
           reject(error);
         }
@@ -261,22 +263,128 @@ async function chatResponse(
     imageCount: imageParts.length,
   });
 
+  // ENHANCED GROUP CHAT LOGGING
+  const otherPersonality = personality === "yin" ? "yang" : "yin";
+  
+  // Analyze conversation flow
+  const conversationAnalysis = analyzeConversationFlow(chatHistory, personality);
+  logger.info(`[GroupChat-${personality.toUpperCase()}] 🔄 Conversation analysis:`, conversationAnalysis);
+
+  // ADD DETAILED CHAT HISTORY LOGGING WITH GROUP CONTEXT
+  logger.info(`[Chat-History-${personality.toUpperCase()}] 📚 Full chat history being passed to ${personality} model:`, {
+    historyLength: chatHistory.length,
+    isGroupChat: conversationAnalysis.isGroupChat,
+    yinMessages: conversationAnalysis.yinMessages,
+    yangMessages: conversationAnalysis.yangMessages,
+    lastSpeaker: conversationAnalysis.lastSpeaker,
+    lastPersonality: conversationAnalysis.lastPersonality,
+    history: chatHistory.map((item, index) => ({
+      index,
+      role: item.role,
+      personality: (item as any)._personality || "unknown",
+      speaker: item.role === "model" ? 
+        ((item as any)._personality === "yin" ? "😇" : 
+         (item as any)._personality === "yang" ? "😈" : "🤖") : "👤",
+      content: item.parts[0]?.text ? 
+        item.parts[0].text.substring(0, 100) + (item.parts[0].text.length > 100 ? '...' : '') : 
+        '[no text]',
+      isOtherPersonality: item.role === "model" && (item as any)._personality === otherPersonality
+    }))
+  });
+
   const messageParts: Part[] = [];
   if (userPrompt.trim()) {
-    messageParts.push({ text: userPrompt });
+    // Add group chat context to the message if it's a group chat
+    if (conversationAnalysis.isGroupChat) {
+      const contextualPrompt = conversationAnalysis.isRespondingToOther 
+        ? `[Group Chat: User just asked "${userPrompt}" - the last message was from ${conversationAnalysis.lastPersonality === "yin" ? "😇" : "😈"} (${conversationAnalysis.lastPersonality}). You can respond to the user, react to ${conversationAnalysis.lastPersonality === "yin" ? "😇" : "😈"}'s message, or both.]`
+        : `[Group Chat: User said "${userPrompt}"]`;
+      messageParts.push({ text: contextualPrompt });
+    } else {
+      messageParts.push({ text: userPrompt });
+    }
   } else if (imageParts.length > 0) {
     messageParts.push({ text: "Describe what you see and provide thoughtful commentary." });
   }
   messageParts.push(...imageParts);
 
+  // ADD MESSAGE PARTS LOGGING
+  logger.info(`[Message-${personality.toUpperCase()}] 💬 Message parts being sent to ${personality} model:`, {
+    partsCount: messageParts.length,
+    currentUserPrompt: userPrompt,
+    isRespondingToOtherPersonality: conversationAnalysis.isRespondingToOther,
+    parts: messageParts.map((part, index) => ({
+      index,
+      text: part.text ? part.text.substring(0, 200) + (part.text.length > 200 ? '...' : '') : undefined,
+      hasInlineData: !!part.inlineData,
+      mimeType: part.inlineData?.mimeType
+    }))
+  });
+
+  // ADD GENERATION CONFIG LOGGING
+  logger.info(`[Config-${personality.toUpperCase()}] ⚙️ Generation config for ${personality} model:`, {
+    temperature: generationConfigs[personality].temperature,
+    topP: generationConfigs[personality].topP,
+    topK: generationConfigs[personality].topK,
+    maxOutputTokens: generationConfigs[personality].maxOutputTokens
+  });
+
   async function generateWithModel(modelType: 'primary' | 'fallback') {
+    logger.info(`[Model-${personality.toUpperCase()}] 🤖 Calling ${modelType} ${personality} model with complete context:`, {
+      personality,
+      modelType,
+      historyEntries: chatHistory.length,
+      currentMessageParts: messageParts.length,
+      totalTokensEstimate: estimateTokens(chatHistory, messageParts),
+      groupChatContext: {
+        isGroupChat: conversationAnalysis.isGroupChat,
+        otherPersonality: otherPersonality,
+        lastSpeaker: conversationAnalysis.lastSpeaker,
+        canSeeOtherResponses: conversationAnalysis.isRespondingToOther
+      }
+    });
+
     const model = createPersonalityModel(personality, modelType);
+    
+    // Clean history for Gemini (preserve personality info in text content)
+    const cleanHistory = chatHistory.map(item => ({
+      role: item.role,
+      parts: item.role === "model" && (item as any)._personality
+        ? [{ text: `${(item as any)._personality === "yin" ? "😇" : "😈"}: ${item.parts[0]?.text || ""}` }]
+        : item.parts
+    }));
+    
+    // LOG WHAT'S ACTUALLY SENT TO GEMINI
+    logger.info(`[Gemini-Input-${personality.toUpperCase()}] 📤 Data being sent to Gemini:`, {
+      cleanHistory: cleanHistory.map((item, index) => ({
+        index,
+        role: item.role,
+        text: item.parts[0]?.text?.substring(0, 150) + (item.parts[0]?.text && item.parts[0].text.length > 150 ? '...' : '')
+      })),
+      messageParts: messageParts.map((part, index) => ({
+        index,
+        text: part.text?.substring(0, 200) + (part.text && part.text.length > 200 ? '...' : ''),
+        hasImage: !!part.inlineData
+      }))
+    });
+    
     const chatSession = model.startChat({
       generationConfig: generationConfigs[personality],
-      history: chatHistory,
+      history: cleanHistory,
     });
+    
     const result = await chatSession.sendMessage(messageParts);
-    return result.response.text();
+    
+    const responseText = result.response.text();
+    logger.info(`[Response-${personality.toUpperCase()}] 📤 ${personality} ${modelType} model response:`, {
+      responseLength: responseText.length,
+      responsePreview: responseText.substring(0, 300) + (responseText.length > 300 ? '...' : ''),
+      personality,
+      modelType,
+      potentialReactionToOther: conversationAnalysis.isRespondingToOther
+    });
+    
+    return responseText;
   }
 
   // Try primary, then fallback
@@ -287,14 +395,16 @@ async function chatResponse(
       RETRY_CONFIG.primary,
       'primary chat'
     );
-  } catch {
+  } catch (error) {
+    logger.error(`[Error-${personality.toUpperCase()}] ❌ Primary ${personality} model failed:`, error);
     try {
       responseText = await withRetry(
         () => generateWithModel('fallback'),
         RETRY_CONFIG.fallback,
         'fallback chat'
       );
-    } catch {
+    } catch (fallbackError) {
+      logger.error(`[Error-${personality.toUpperCase()}] ❌ Fallback ${personality} model also failed:`, fallbackError);
       responseText = JSON.stringify({ bubbles: ["... ummmmm"] });
     }
   }
@@ -306,8 +416,75 @@ async function chatResponse(
     if (!responseJson.bubbles?.length) {
       responseJson.bubbles = ["... ummmmm"];
     }
-  } catch {
+    responseJson.bubbles = responseJson.bubbles.map((bubble: string) => 
+      bubble.replace(/^😇 yin:\s*|^😈yang:\s*/i, '').trim()
+    );
+    logger.info(`[Parsed-${personality.toUpperCase()}] 🎯 Final parsed response from ${personality}:`, {
+      bubbleCount: responseJson.bubbles.length,
+      bubbles: responseJson.bubbles,
+      mightBeReactingToOther: conversationAnalysis.isRespondingToOther && responseJson.bubbles.some((bubble: string) => 
+        bubble.includes('you') || bubble.includes('your') || bubble.includes('stop') || bubble.includes('fr')
+      )
+    });
+  } catch (parseError) {
+    logger.error(`[Parse-Error-${personality.toUpperCase()}] ❌ Failed to parse ${personality} response:`, {
+      error: parseError,
+      rawResponse: responseText
+    });
     responseJson = { bubbles: ["I'm having trouble processing right now."] };
   }
+  
   return { responseText, responseJson };
+}
+
+// Helper function to analyze conversation flow for group chat dynamics
+function analyzeConversationFlow(chatHistory: any[], currentPersonality: PersonalityType) {
+  const otherPersonality = currentPersonality === "yin" ? "yang" : "yin";
+  
+  // Count messages from each personality using our preserved metadata
+  const yinMessages = chatHistory.filter(msg => 
+    msg.role === "model" && (msg as any)._personality === "yin"
+  ).length;
+  
+  const yangMessages = chatHistory.filter(msg => 
+    msg.role === "model" && (msg as any)._personality === "yang"
+  ).length;
+  
+  const hasOtherPersonality = (currentPersonality === "yin" ? yangMessages : yinMessages) > 0;
+  
+  let lastSpeaker = "user";
+  let isRespondingToOther = false;
+  let lastPersonality = null;
+  
+  if (chatHistory.length > 0) {
+    const lastEntry = chatHistory[chatHistory.length - 1];
+    lastSpeaker = lastEntry.role;
+    
+    // Check if the last model response was from the other personality
+    if (lastEntry.role === "model") {
+      lastPersonality = (lastEntry as any)._personality;
+      isRespondingToOther = lastPersonality === otherPersonality;
+    }
+  }
+  
+  return {
+    hasOtherPersonality,
+    isGroupChat: hasOtherPersonality,
+    lastSpeaker,
+    lastPersonality,
+    isRespondingToOther,
+    conversationTurns: chatHistory.length,
+    yinMessages,
+    yangMessages,
+    otherPersonalityName: otherPersonality === "yin" ? "😇" : "😈"
+  };
+}
+
+// Helper function to estimate token count for logging
+function estimateTokens(chatHistory: Content[], messageParts: Part[]): number {
+  const historyText = chatHistory.reduce((acc, item) => 
+    acc + item.parts.reduce((partAcc, part) => partAcc + (part.text?.length || 0), 0), 0
+  );
+  const messageText = messageParts.reduce((acc, part) => acc + (part.text?.length || 0), 0);
+  return Math.ceil((historyText + messageText) / 4); // Rough token estimation
 }
