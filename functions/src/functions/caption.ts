@@ -1,4 +1,3 @@
-import { genaiClient } from "../config";
 import { Part } from "@google/generative-ai";
 import { HttpsOptions, onRequest } from "firebase-functions/https";
 import busboy from "busboy";
@@ -7,46 +6,17 @@ import { Readable } from "stream";
 import { loadPrompt } from "../utils/loadPrompt";
 import { authenticate } from "../utils/auth";
 import admin from "../admin";
+import { withRetry } from "../utils/modelRetry";
+import { createPersonalityModel } from "../utils/models";
 
 interface CustomHttpsOptions extends HttpsOptions {
   allowUnparsed: boolean;
 }
 
-// Retry configuration (Primary 2.0 Flash, Fallback 2.5 Flash)
-const RETRY_DELAY_MS = 1000; // 1 second
-const MAX_PRIMARY_RETRIES = 3;
-const MAX_FALLBACK_RETRIES = 10;
-const FAILURE_RESPONSES = {
-  caption: "caption error",
-  description: "",
-  transitionalComment: ""
-};
-
-const DESCRIPTION_PROMPT = "Describe this image in one simple, factual sentence. Focus on what is literally in the image without any style or personality.";
-
-// Initialize personality-specific models with their respective system instructions
-// Each model uses the same base model but with different personality prompts
-const personalityModels = {
-  yin: {
-    primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
-    }),
-    fallback: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
-    }),
-  },
-  yang: {
-    primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
-    }),
-    fallback: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
-    }),
-  },
+// Simple configuration
+const RETRY_CONFIG = {
+  primary: { maxRetries: 3, delayMs: 1000, exponentialBackoff: true },
+  fallback: { maxRetries: 5, delayMs: 1000 }
 };
 
 // Interface for processed form data and images
@@ -262,73 +232,133 @@ async function processFormDataAndImages(
   });
 }
 
+// HTTP endpoint for generating image captions
+export const caption = onRequest(
+  { allowUnparsed: true } as CustomHttpsOptions,
+  async (req, res) => {
+    logger.info("[Chat-API-Logs] 🚀 Caption endpoint called", {
+      method: req.method,
+      path: req.path,
+    });
+
+    // Only allow POST requests
+    if (req.method !== "POST") {
+      logger.info("[Chat-API-Logs] ❌ Method not allowed:", req.method);
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    // Authenticate the user and get their UID
+    const uid = await authenticate(req, res, admin.app());
+    if (!uid) return;
+    logger.info(`[Chat-API-Logs] 👤 Authenticated user: ${uid}`);
+
+    try {
+      // Process form data and images in a single step
+      logger.info("[Chat-API-Logs] 📝 Processing form data and images...");
+      const { userPrompt, prevPhotoDescription, personality, imageParts } =
+        await processFormDataAndImages(req);
+
+      logger.info("[Chat-API-Logs] 📦 Form data processed:", {
+        hasUserPrompt: !!userPrompt,
+        hasPrevDescription: !!prevPhotoDescription,
+        personality,
+        imageCount: imageParts.length,
+      });
+
+      // Validate that at least one image was provided
+      if (imageParts.length === 0) {
+        logger.info("[Chat-API-Logs] ❌ No images provided");
+        res.status(400).send("No images provided");
+        return;
+      }
+
+      // Generate caption using the processed image and user prompt
+      logger.info("[Chat-API-Logs] 🎨 Starting caption generation...");
+      const { caption, description, transitionalComment } =
+        await generateCaption(
+          imageParts,
+          userPrompt,
+          personality,
+          prevPhotoDescription,
+        );
+
+      logger.info("[Chat-API-Logs] ✅ Caption generation complete:", {
+        captionLength: caption.length,
+        descriptionLength: description.length,
+        hasTransitionalComment: !!transitionalComment,
+      });
+
+      // Return the generated caption, description, and transitional comment as JSON
+      res.json({ caption, description, transitionalComment });
+      logger.info("[Chat-API-Logs] 📤 Response sent successfully");
+    } catch (error) {
+      // Handle any errors during processing
+      logger.error("[Chat-API-Logs] ❌ Error in caption endpoint:", error);
+      res.status(500).send("Error generating caption");
+    }
+  },
+);
+
 export async function generateCaption(
   imageParts: Part[],
   userPrompt: string,
   personality: "yin" | "yang" = "yin",
   prevPhotoDescription?: string,
-): Promise<{
-  caption: string;
-  description: string;
-  transitionalComment?: string;
-}> {
-  const effectivePrompt = userPrompt.trim() || "Please generate a natural, engaging caption for this image that captures its essence and meaning.";
-
-  logger.info("[CAPTION-API-Logs] 🎨 Starting caption generation", {
+): Promise<{ caption: string; description: string; transitionalComment?: string }> {
+  
+  const effectivePrompt = userPrompt.trim() || "Please generate a natural, engaging caption for this image.";
+  
+  logger.info("[Chat-API-Logs] 🎨 Starting caption generation", {
     personality,
     hasPrevDescription: !!prevPhotoDescription,
-    prevPhotoDescription: prevPhotoDescription || "none provided",
     imageCount: imageParts.length,
     promptLength: effectivePrompt.length,
-    isDefaultPrompt: !userPrompt.trim(),
   });
-
-  // Prepare all generation tasks
-  const generationTasks = [
-    // Generate the social media caption
-    generateContentWithRetry(personality, [
-      {
-        text: `${loadPrompt("caption")}\n\nContext from user: ${effectivePrompt}`,
-      },
-      ...imageParts,
-    ], 'caption'),
-
-    // Generate a plain description
-    generateContentWithRetry(personality, [
-      {
-        text: DESCRIPTION_PROMPT,
-      },
-      ...imageParts,
-    ], 'description'),
-
-    // Generate transitional comment if needed
-    prevPhotoDescription
-      ? generateContentWithRetry(personality, [
-          {
-            text: personality === "yin"
-              ? loadPrompt("yin_transition").replace(
-                  "{prevPhotoDescription}",
-                  prevPhotoDescription,
-                )
-              : loadPrompt("yang_transition").replace(
-                  "{prevPhotoDescription}",
-                  prevPhotoDescription,
-                ),
-          },
-          ...imageParts,
-        ], 'transitionalComment')
-      : Promise.resolve(""),
-  ];
-
-  // Execute all generations in parallel
-  logger.info("[CAPTION-API-Logs] 🚀 Starting parallel generation of caption, description, and transitional comment");
-  const [caption, description, transitionalComment] = await Promise.all(generationTasks);
+  
+  // Simple generation function
+  async function generateWithModel(modelType: 'primary' | 'fallback', prompt: string) {
+    const model = createPersonalityModel(personality, modelType);
+    const result = await model.generateContent([{ text: prompt }, ...imageParts]);
+    return result.response.text();
+  }
+  
+  // Generate all content with simple retry
+  const [caption, description, transitionalComment] = await Promise.all([
+    // Caption
+    withRetry(
+      () => generateWithModel('primary', `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`),
+      RETRY_CONFIG.primary,
+      'caption generation'
+    ).catch(() => 
+      withRetry(
+        () => generateWithModel('fallback', `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`),
+        RETRY_CONFIG.fallback,
+        'caption fallback'
+      ).catch(() => "Caption unavailable")
+    ),
+    
+    // Description  
+    withRetry(
+      () => generateWithModel('primary', "Describe this image in one simple, factual sentence."),
+      RETRY_CONFIG.primary,
+      'description generation'
+    ).catch(() => ""),
+    
+    // Transitional comment (if needed)
+    prevPhotoDescription ? withRetry(
+      () => generateWithModel('primary', 
+        loadPrompt(`${personality}_transition`).replace("{prevPhotoDescription}", prevPhotoDescription)
+      ),
+      RETRY_CONFIG.primary,
+      'transition generation'
+    ).catch(() => "") : Promise.resolve("")
+  ]);
 
   logger.info("[CAPTION-API-Logs] ✅ Caption generation complete", {
     caption,
     description,
     hasTransitionalComment: !!transitionalComment,
-    ...(transitionalComment && { transitionalComment }),
   });
 
   return { 
@@ -336,74 +366,4 @@ export async function generateCaption(
     description, 
     transitionalComment: transitionalComment || undefined 
   };
-}
-
-// Add this helper function for retrying content generation
-async function generateContentWithRetry(
-  personality: "yin" | "yang",
-  parts: any[],
-  responseType: keyof typeof FAILURE_RESPONSES
-): Promise<string> {
-  // Primary model retry logic
-  let primaryRetries = 0;
-
-  while (primaryRetries < MAX_PRIMARY_RETRIES) {
-    try {
-      const result = await invokeLLM(personality, parts, 'primary');
-      return (await result.response).text();
-    } catch (error: any) {
-      if (error.status === 503) {
-        primaryRetries++;
-        logger.warn(
-          `[CAPTION-API-Logs] ⚠️ Primary model overloaded. Retrying (${primaryRetries}/${MAX_PRIMARY_RETRIES})...`
-        );
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * primaryRetries)); // Exponential backoff
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  // If primary model fails, try fallback model
-  logger.warn(
-    "[CAPTION-API-Logs] 🚨 Primary model failed. Switching to fallback model ('gemini-2.5-flash-preview-05-20')."
-  );
-
-  // Fallback model retry logic
-  let fallbackRetries = 0;
-
-  while (fallbackRetries < MAX_FALLBACK_RETRIES) {
-    try {
-      const result = await invokeLLM(personality, parts, 'fallback');
-      return (await result.response).text();
-    } catch (error: any) {
-      if (error.status === 503) {
-        fallbackRetries++;
-        logger.warn(
-          `[CAPTION-API-Logs] ⚠️ Fallback model overloaded. Retrying (${fallbackRetries}/${MAX_FALLBACK_RETRIES})...`
-        );
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS)); // Constant delay for fallback
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  // If all retries fail, return the appropriate failure response
-  logger.error(`[CAPTION-API-Logs] ❌ All retries failed for ${responseType}. Returning failure response.`);
-  return FAILURE_RESPONSES[responseType];
-}
-
-// Helper function to invoke LLM
-async function invokeLLM(
-  personality: "yin" | "yang",
-  parts: any[],
-  modelType: 'primary' | 'fallback'
-): Promise<any> {
-  logger.info(
-    `[CAPTION-API-Logs] 🤖 Attempting ${modelType} model`
-  );
-  const result = await personalityModels[personality][modelType].generateContent(parts);
-  logger.info(`[CAPTION-API-Logs] ✅ ${modelType} model succeeded.`);
-  return result;
 }

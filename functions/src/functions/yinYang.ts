@@ -1,6 +1,5 @@
 // Import necessary dependencies for Firebase Functions, Google AI, and file processing
 import { HttpsOptions, onRequest } from "firebase-functions/https";
-import { genaiClient } from "../config";
 import busboy from "busboy";
 import admin from "../admin";
 import { logger } from "firebase-functions";
@@ -11,7 +10,8 @@ import {
   SchemaType,
 } from "@google/generative-ai";
 import { authenticate } from "../utils/auth";
-import { loadPrompt } from "../utils/loadPrompt";
+import { withRetry } from "../utils/modelRetry";
+import { createPersonalityModel } from "../utils/models";
 
 // Extend HttpsOptions to allow unparsed request bodies for file uploads
 interface CustomHttpsOptions extends HttpsOptions {
@@ -27,31 +27,6 @@ const FAILURE_RESPONSE = "... ummmmm";
 
 // Define the possible personality types for the AI model
 type PersonalityType = "yin" | "yang";
-
-// Initialize personality-specific models with their respective system instructions
-// Each model uses the same base model but with different personality prompts
-const personalityModels = {
-  yin: {
-    primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
-    }),
-    fallback: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
-    }),
-  },
-  yang: {
-    primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
-    }),
-    fallback: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
-      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
-    }),
-  },
-};
 
 // Configure the generation parameters for the AI model
 // These settings control the creativity and output format of the model
@@ -86,8 +61,10 @@ interface UnifiedFormData {
   imageParts: any[];
 }
 
-// Helper function to wait between retries
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const RETRY_CONFIG = {
+  primary: { maxRetries: 3, delayMs: 1000, exponentialBackoff: true },
+  fallback: { maxRetries: 5, delayMs: 1000 }
+};
 
 // Main endpoint handler for processing yin/yang personality requests
 // This function handles both text and image-based interactions
@@ -284,113 +261,53 @@ async function chatResponse(
     imageCount: imageParts.length,
   });
 
-  // Combine user prompt with any image parts
   const messageParts: Part[] = [];
   if (userPrompt.trim()) {
     messageParts.push({ text: userPrompt });
   } else if (imageParts.length > 0) {
-    messageParts.push({
-      text: "Describe what you see in this image in detail and provide thoughtful commentary.",
-    });
+    messageParts.push({ text: "Describe what you see and provide thoughtful commentary." });
   }
   messageParts.push(...imageParts);
 
-  logger.info("[Chat-API-Logs] 📝 Sending message to model", {
-    textLength: userPrompt.length,
-    imageCount: imageParts.length,
-  });
+  async function generateWithModel(modelType: 'primary' | 'fallback') {
+    const model = createPersonalityModel(personality, modelType);
+    const chatSession = model.startChat({
+      generationConfig: generationConfigs[personality],
+      history: chatHistory,
+    });
+    const result = await chatSession.sendMessage(messageParts);
+    return result.response.text();
+  }
 
-  // Primary model retry logic
-  let primaryRetries = 0;
-
-  while (primaryRetries < MAX_PRIMARY_RETRIES) {
+  // Try primary, then fallback
+  let responseText: string;
+  try {
+    responseText = await withRetry(
+      () => generateWithModel('primary'),
+      RETRY_CONFIG.primary,
+      'primary chat'
+    );
+  } catch {
     try {
-      return await invokeLLM(personality, chatHistory, messageParts, 'primary');
-    } catch (error: any) {
-      if (error.status === 503) {
-        primaryRetries++;
-        logger.warn(
-          `[Chat-API-Logs] ⚠️ Primary model overloaded. Retrying (${primaryRetries}/${MAX_PRIMARY_RETRIES})...`
-        );
-        await wait(RETRY_DELAY_MS * primaryRetries); // Exponential backoff
-      } else {
-        throw error;
-      }
+      responseText = await withRetry(
+        () => generateWithModel('fallback'),
+        RETRY_CONFIG.fallback,
+        'fallback chat'
+      );
+    } catch {
+      responseText = JSON.stringify({ bubbles: ["... ummmmm"] });
     }
   }
 
-  // If primary model fails, try fallback model
-  logger.warn(
-    "[Chat-API-Logs] 🚨 Primary model failed. Switching to fallback model ('gemini-2.5-flash-preview-05-20')."
-  );
-
-  // Fallback model retry logic
-  let fallbackRetries = 0;
-
-  while (fallbackRetries < MAX_FALLBACK_RETRIES) {
-    try {
-      return await invokeLLM(personality, chatHistory, messageParts, 'fallback');
-    } catch (error: any) {
-      if (error.status === 503) {
-        fallbackRetries++;
-        logger.warn(
-          `[Chat-API-Logs] ⚠️ Fallback model overloaded. Retrying (${fallbackRetries}/${MAX_FALLBACK_RETRIES})...`
-        );
-        await wait(RETRY_DELAY_MS); // Constant delay for fallback
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  // If we've exhausted all fallback retries, return the umm message
-  logger.error("[Chat-API-Logs] ❌ All fallback retries failed. Returning fallback message.");
-  return {
-    responseText: JSON.stringify({ bubbles: [FAILURE_RESPONSE] }),
-    responseJson: { bubbles: [FAILURE_RESPONSE] }
-  };
-}
-
-// Helper function to invoke LLM
-async function invokeLLM(
-  personality: PersonalityType,
-  chatHistory: Content[],
-  messageParts: Part[],
-  modelType: 'primary' | 'fallback'
-): Promise<{ responseText: string; responseJson: any }> {
-  logger.info(
-    `[Chat-API-Logs] 🤖 Attempting ${modelType} model`
-  );
-  const chatSession = personalityModels[personality][modelType].startChat({
-    generationConfig: generationConfigs[personality],
-    history: chatHistory,
-  });
-  const llmResponse = await chatSession.sendMessage(messageParts);
-  const responseText = llmResponse.response.text();
-  let responseJson: any;
+  // Parse response
+  let responseJson;
   try {
     responseJson = JSON.parse(responseText);
-    if (!responseJson.bubbles) {
-      responseJson.bubbles = [];
+    if (!responseJson.bubbles?.length) {
+      responseJson.bubbles = ["... ummmmm"];
     }
-    // If the response is empty and there are image parts, return the failure response:
-    if (
-      Array.isArray(responseJson.bubbles) &&
-      responseJson.bubbles.length === 0 
-      // && messageParts.some(part => 'inlineData' in part)
-    ) {
-      responseJson.bubbles = [FAILURE_RESPONSE];
-    }
-  } catch (error) {
-    logger.error(`[Chat-API-Logs] ❌ Failed to parse ${modelType} response as JSON`, error);
-    responseJson = {
-      bubbles: [
-        "I can see your image, but I'm having trouble processing it right now. Can you tell me what you'd like to know about it?",
-      ],
-    };
+  } catch {
+    responseJson = { bubbles: ["I'm having trouble processing right now."] };
   }
-  logger.info(`[Chat-API-Logs] ✅ ${modelType} model succeeded.`, {
-    responseLength: responseText.length,
-  });
   return { responseText, responseJson };
 }
