@@ -1,4 +1,3 @@
-import { genaiClient } from "../config";
 import { Part } from "@google/generative-ai";
 import { HttpsOptions, onRequest } from "firebase-functions/https";
 import busboy from "busboy";
@@ -7,10 +6,18 @@ import { Readable } from "stream";
 import { loadPrompt } from "../utils/loadPrompt";
 import { authenticate } from "../utils/auth";
 import admin from "../admin";
+import { withRetry } from "../utils/modelRetry";
+import { createPersonalityModel } from "../utils/models";
 
 interface CustomHttpsOptions extends HttpsOptions {
   allowUnparsed: boolean;
 }
+
+// Simple configuration
+const RETRY_CONFIG = {
+  primary: { maxRetries: 3, delayMs: 1000, exponentialBackoff: true },
+  fallback: { maxRetries: 5, delayMs: 1000 },
+};
 
 // Interface for processed form data and images
 interface ProcessedFormData {
@@ -20,11 +27,79 @@ interface ProcessedFormData {
   imageParts: Part[];
 }
 
+// HTTP endpoint for generating image captions
+export const caption = onRequest(
+  { allowUnparsed: true } as CustomHttpsOptions,
+  async (req, res) => {
+    logger.info("[CAPTION-API-Logs] 🚀 Caption endpoint called", {
+      method: req.method,
+      path: req.path,
+    });
+
+    // Only allow POST requests
+    if (req.method !== "POST") {
+      logger.info("[CAPTION-API-Logs] ❌ Method not allowed:", req.method);
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    // Authenticate the user and get their UID
+    const uid = await authenticate(req, res, admin.app());
+    if (!uid) return;
+    logger.info(`[CAPTION-API-Logs] 👤 Authenticated user: ${uid}`);
+
+    try {
+      // Process form data and images in a single step
+      logger.info("[CAPTION-API-Logs] 📝 Processing form data and images...");
+      const { userPrompt, prevPhotoDescription, personality, imageParts } =
+        await processFormDataAndImages(req);
+
+      logger.info("[CAPTION-API-Logs] 📦 Form data processed:", {
+        hasUserPrompt: !!userPrompt,
+        hasPrevDescription: !!prevPhotoDescription,
+        personality,
+        imageCount: imageParts.length,
+      });
+
+      // Validate that at least one image was provided
+      if (imageParts.length === 0) {
+        logger.info("[CAPTION-API-Logs] ❌ No images provided");
+        res.status(400).send("No images provided");
+        return;
+      }
+
+      // Generate caption using the processed image and user prompt
+      logger.info("[CAPTION-API-Logs] 🎨 Starting caption generation...");
+      const { caption, description, transitionalComment } =
+        await generateCaption(
+          imageParts,
+          userPrompt,
+          personality,
+          prevPhotoDescription,
+        );
+
+      logger.info("[CAPTION-API-Logs] ✅ Caption generation complete:", {
+        captionLength: caption.length,
+        descriptionLength: description.length,
+        hasTransitionalComment: !!transitionalComment,
+      });
+
+      // Return the generated caption, description, and transitional comment as JSON
+      res.json({ caption, description, transitionalComment });
+      logger.info("[CAPTION-API-Logs] 📤 Response sent successfully");
+    } catch (error) {
+      // Handle any errors during processing
+      logger.error("[CAPTION-API-Logs] ❌ Error in caption endpoint:", error);
+      res.status(500).send("Error generating caption");
+    }
+  },
+);
+
 // Process all form data including fields and files in a single function
 async function processFormDataAndImages(
   req: import("express").Request,
 ): Promise<ProcessedFormData> {
-  logger.info("[Chat-API-Logs] 📝 Starting form data processing");
+  logger.info("[CAPTION-API-Logs] 📝 Starting form data processing");
 
   return await new Promise((resolve, reject) => {
     const bb = busboy({ headers: req.headers });
@@ -36,26 +111,31 @@ async function processFormDataAndImages(
 
     // Handle form fields
     bb.on("field", (name: string, val: string) => {
-      logger.info(`[Chat-API-Logs] 📋 Processing field: ${name}`);
+      logger.info(`[CAPTION-API-Logs] 📋 Processing field: ${name}`);
 
       if (name === "prompt") {
         userPrompt = val;
-        logger.info("[Chat-API-Logs] - User prompt received:", {
+        logger.info("[CAPTION-API-Logs] - User prompt received:", {
           length: val.length,
         });
       } else if (name === "prevPhotoDescription") {
-        logger.info("[Chat-API-Logs] 📸 Previous photo description received:", {
-          length: val.length,
-        });
+        logger.info(
+          "[CAPTION-API-Logs] 📸 Previous photo description received:",
+          {
+            length: val.length,
+          },
+        );
         prevPhotoDescription = val;
       } else if (name === "personality") {
         const requestedPersonality = val.toLowerCase() as "yin" | "yang";
         if (requestedPersonality === "yin" || requestedPersonality === "yang") {
           personality = requestedPersonality;
-          logger.info(`[Chat-API-Logs] 👤 Using personality: ${personality}`);
+          logger.info(
+            `[CAPTION-API-Logs] 👤 Using personality: ${personality}`,
+          );
         } else {
           logger.warn(
-            `[Chat-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`,
+            `[CAPTION-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`,
           );
         }
       }
@@ -70,12 +150,12 @@ async function processFormDataAndImages(
         info: { filename: string; mimeType: string },
       ) => {
         if (name !== "images") {
-          logger.info(`[Chat-API-Logs] ⚠️ Skipping non-image file: ${name}`);
+          logger.info(`[CAPTION-API-Logs] ⚠️ Skipping non-image file: ${name}`);
           fileStream.resume();
           return;
         }
 
-        logger.info(`[Chat-API-Logs] 📤 Processing file:`, {
+        logger.info(`[CAPTION-API-Logs] 📤 Processing file:`, {
           filename: info.filename,
           mimeType: info.mimeType,
         });
@@ -89,7 +169,7 @@ async function processFormDataAndImages(
         ];
         if (!allowedMimeTypes.includes(info.mimeType)) {
           logger.warn(
-            `[Chat-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`,
+            `[CAPTION-API-Logs] ❌ Rejected file with invalid MIME type: ${info.mimeType}`,
           );
           fileStream.resume();
           return;
@@ -113,13 +193,13 @@ async function processFormDataAndImages(
                 },
               });
               logger.info(
-                `[Chat-API-Logs] ✅ File processed: ${info.filename}`,
+                `[CAPTION-API-Logs] ✅ File processed: ${info.filename}`,
               );
               resolve();
             });
             fileStream.on("error", (error) => {
               logger.error(
-                `[Chat-API-Logs] ❌ Error processing file: ${info.filename}`,
+                `[CAPTION-API-Logs] ❌ Error processing file: ${info.filename}`,
                 error,
               );
               reject(error);
@@ -134,7 +214,7 @@ async function processFormDataAndImages(
       try {
         await Promise.all(filePromises);
         logger.info(
-          `[Chat-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`,
+          `[CAPTION-API-Logs] ✅ All files processed. Total image parts: ${imageParts.length}`,
         );
         resolve({
           userPrompt,
@@ -143,13 +223,13 @@ async function processFormDataAndImages(
           imageParts,
         });
       } catch (error) {
-        logger.error("[Chat-API-Logs] ❌ Error processing files:", error);
+        logger.error("[CAPTION-API-Logs] ❌ Error processing files:", error);
         reject(error);
       }
     });
 
     bb.once("error", (error) => {
-      logger.error("[Chat-API-Logs] ❌ Busboy error:", error);
+      logger.error("[CAPTION-API-Logs] ❌ Busboy error:", error);
       reject(error);
     });
 
@@ -157,108 +237,6 @@ async function processFormDataAndImages(
   });
 }
 
-// HTTP endpoint for generating image captions
-export const caption = onRequest(
-  { allowUnparsed: true } as CustomHttpsOptions,
-  async (req, res) => {
-    logger.info("[Chat-API-Logs] 🚀 Caption endpoint called", {
-      method: req.method,
-      path: req.path,
-    });
-
-    // Only allow POST requests
-    if (req.method !== "POST") {
-      logger.info("[Chat-API-Logs] ❌ Method not allowed:", req.method);
-      res.status(405).send("Method not allowed");
-      return;
-    }
-
-    // Authenticate the user and get their UID
-    const uid = await authenticate(req, res, admin.app());
-    if (!uid) return;
-    logger.info(`[Chat-API-Logs] 👤 Authenticated user: ${uid}`);
-
-    try {
-      // Process form data and images in a single step
-      logger.info("[Chat-API-Logs] 📝 Processing form data and images...");
-      const { userPrompt, prevPhotoDescription, personality, imageParts } =
-        await processFormDataAndImages(req);
-
-      logger.info("[Chat-API-Logs] 📦 Form data processed:", {
-        hasUserPrompt: !!userPrompt,
-        hasPrevDescription: !!prevPhotoDescription,
-        personality,
-        imageCount: imageParts.length,
-      });
-
-      // Validate that at least one image was provided
-      if (imageParts.length === 0) {
-        logger.info("[Chat-API-Logs] ❌ No images provided");
-        res.status(400).send("No images provided");
-        return;
-      }
-
-      // Generate caption using the processed image and user prompt
-      logger.info("[Chat-API-Logs] 🎨 Starting caption generation...");
-      const { caption, description, transitionalComment } =
-        await generateCaption(
-          imageParts,
-          userPrompt,
-          personality,
-          prevPhotoDescription,
-        );
-
-      logger.info("[Chat-API-Logs] ✅ Caption generation complete:", {
-        captionLength: caption.length,
-        descriptionLength: description.length,
-        hasTransitionalComment: !!transitionalComment,
-      });
-
-      // Return the generated caption, description, and transitional comment as JSON
-      res.json({ caption, description, transitionalComment });
-      logger.info("[Chat-API-Logs] 📤 Response sent successfully");
-    } catch (error) {
-      // Handle any errors during processing
-      logger.error("[Chat-API-Logs] ❌ Error in caption endpoint:", error);
-      res.status(500).send("Error generating caption");
-    }
-  },
-);
-
-// Add this helper function for retrying content generation
-async function generateContentWithRetry(
-  model: any,
-  parts: any[],
-  maxRetries = 3,
-  retryDelay = 1000,
-): Promise<any> {
-  let lastError;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logger.info(
-        `[Chat-API-Logs] 🔄 Generation attempt ${attempt}/${maxRetries}`,
-      );
-      const result = await model.generateContent(parts);
-      return result;
-    } catch (error) {
-      lastError = error;
-      logger.warn(
-        `[Chat-API-Logs] ⚠️ Generation attempt ${attempt} failed:`,
-        error,
-      );
-
-      if (attempt < maxRetries) {
-        logger.info(
-          `[Chat-API-Logs] 😴 Waiting ${retryDelay}ms before retry...`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, retryDelay));
-      }
-    }
-  }
-  throw lastError;
-}
-
-// Modify the generateCaption function
 export async function generateCaption(
   imageParts: Part[],
   userPrompt: string,
@@ -271,78 +249,88 @@ export async function generateCaption(
 }> {
   const effectivePrompt =
     userPrompt.trim() ||
-    "Please generate a natural, engaging caption for this image that captures its essence and meaning.";
+    "Please generate a natural, engaging caption for this image.";
 
   logger.info("[Chat-API-Logs] 🎨 Starting caption generation", {
     personality,
     hasPrevDescription: !!prevPhotoDescription,
-    prevPhotoDescription: prevPhotoDescription || "none provided",
     imageCount: imageParts.length,
     promptLength: effectivePrompt.length,
-    isDefaultPrompt: !userPrompt.trim(),
   });
 
-  const model = genaiClient.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt(personality)}`,
-  });
-
-  // Generate the social media caption with retry mechanism
-  logger.info("[Chat-API-Logs] 📝 Generating social media caption...");
-  const captionResult = await generateContentWithRetry(model, [
-    {
-      text: `${loadPrompt("caption")}\n\nContext from user: ${effectivePrompt}`,
-    },
-    ...imageParts,
-  ]);
-
-  // Generate a plain description with retry mechanism
-  logger.info("[Chat-API-Logs] 📋 Generating plain description...");
-  const descriptionResult = await generateContentWithRetry(model, [
-    {
-      text: `Describe this image in one simple, factual sentence. Focus on what is literally in the image without any style or personality.`,
-    },
-    ...imageParts,
-  ]);
-
-  // Handle transitional comment with retry mechanism if needed
-  let transitionalComment: string | undefined;
-  if (prevPhotoDescription) {
-    logger.info(
-      "[Chat-API-Logs] 🔄 Generating transitional comment for previous photo:",
-      { prevPhotoDescription },
-    );
-    const transitionPrompt =
-      personality === "yin"
-        ? loadPrompt("yin_transition").replace(
-            "{prevPhotoDescription}",
-            prevPhotoDescription,
-          )
-        : loadPrompt("yang_transition").replace(
-            "{prevPhotoDescription}",
-            prevPhotoDescription,
-          );
-
-    const transitionResult = await generateContentWithRetry(model, [
-      { text: transitionPrompt },
+  // Simple generation function
+  async function generateWithModel(
+    modelType: "primary" | "fallback",
+    prompt: string,
+  ) {
+    const model = createPersonalityModel(personality, modelType);
+    const result = await model.generateContent([
+      { text: prompt },
       ...imageParts,
     ]);
-
-    transitionalComment = (await transitionResult.response).text();
-    logger.info("[Chat-API-Logs] ✨ Generated transitional comment:", {
-      transitionalComment,
-    });
+    return result.response.text();
   }
 
-  const caption = (await captionResult.response).text();
-  const description = (await descriptionResult.response).text();
+  // Generate all content with simple retry
+  const [caption, description, transitionalComment] = await Promise.all([
+    // Caption
+    withRetry(
+      () =>
+        generateWithModel(
+          "primary",
+          `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`,
+        ),
+      RETRY_CONFIG.primary,
+      "caption generation",
+    ).catch(() =>
+      withRetry(
+        () =>
+          generateWithModel(
+            "fallback",
+            `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`,
+          ),
+        RETRY_CONFIG.fallback,
+        "caption fallback",
+      ).catch(() => "Caption unavailable"),
+    ),
 
-  logger.info("[Chat-API-Logs] ✅ Caption generation complete", {
+    // Description
+    withRetry(
+      () =>
+        generateWithModel(
+          "primary",
+          "Describe this image in one simple, factual sentence.",
+        ),
+      RETRY_CONFIG.primary,
+      "description generation",
+    ).catch(() => ""),
+
+    // Transitional comment (if needed)
+    prevPhotoDescription
+      ? withRetry(
+          () =>
+            generateWithModel(
+              "primary",
+              loadPrompt(`${personality}_transition`).replace(
+                "{prevPhotoDescription}",
+                prevPhotoDescription,
+              ),
+            ),
+          RETRY_CONFIG.primary,
+          "transition generation",
+        ).catch(() => "")
+      : Promise.resolve(""),
+  ]);
+
+  logger.info("[CAPTION-API-Logs] ✅ Caption generation complete", {
     caption,
     description,
     hasTransitionalComment: !!transitionalComment,
-    ...(transitionalComment && { transitionalComment }),
   });
 
-  return { caption, description, transitionalComment };
+  return {
+    caption,
+    description,
+    transitionalComment: transitionalComment || undefined,
+  };
 }
