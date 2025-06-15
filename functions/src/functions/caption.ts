@@ -16,7 +16,7 @@ interface CustomHttpsOptions extends HttpsOptions {
 // Simple configuration
 const RETRY_CONFIG = {
   primary: { maxRetries: 3, delayMs: 1000, exponentialBackoff: true },
-  fallback: { maxRetries: 5, delayMs: 1000 }
+  fallback: { maxRetries: 5, delayMs: 1000 },
 };
 
 // Interface for processed form data and images
@@ -119,15 +119,20 @@ async function processFormDataAndImages(
           length: val.length,
         });
       } else if (name === "prevPhotoDescription") {
-        logger.info("[CAPTION-API-Logs] 📸 Previous photo description received:", {
-          length: val.length,
-        });
+        logger.info(
+          "[CAPTION-API-Logs] 📸 Previous photo description received:",
+          {
+            length: val.length,
+          },
+        );
         prevPhotoDescription = val;
       } else if (name === "personality") {
         const requestedPersonality = val.toLowerCase() as "yin" | "yang";
         if (requestedPersonality === "yin" || requestedPersonality === "yang") {
           personality = requestedPersonality;
-          logger.info(`[CAPTION-API-Logs] 👤 Using personality: ${personality}`);
+          logger.info(
+            `[CAPTION-API-Logs] 👤 Using personality: ${personality}`,
+          );
         } else {
           logger.warn(
             `[CAPTION-API-Logs] ⚠️ Invalid personality requested: ${val}, defaulting to yin`,
@@ -237,54 +242,84 @@ export async function generateCaption(
   userPrompt: string,
   personality: "yin" | "yang" = "yin",
   prevPhotoDescription?: string,
-): Promise<{ caption: string; description: string; transitionalComment?: string }> {
-  
-  const effectivePrompt = userPrompt.trim() || "Please generate a natural, engaging caption for this image.";
-  
+): Promise<{
+  caption: string;
+  description: string;
+  transitionalComment?: string;
+}> {
+  const effectivePrompt =
+    userPrompt.trim() ||
+    "Please generate a natural, engaging caption for this image.";
+
   logger.info("[Chat-API-Logs] 🎨 Starting caption generation", {
     personality,
     hasPrevDescription: !!prevPhotoDescription,
     imageCount: imageParts.length,
     promptLength: effectivePrompt.length,
   });
-  
+
   // Simple generation function
-  async function generateWithModel(modelType: 'primary' | 'fallback', prompt: string) {
+  async function generateWithModel(
+    modelType: "primary" | "fallback",
+    prompt: string,
+  ) {
     const model = createPersonalityModel(personality, modelType);
-    const result = await model.generateContent([{ text: prompt }, ...imageParts]);
+    const result = await model.generateContent([
+      { text: prompt },
+      ...imageParts,
+    ]);
     return result.response.text();
   }
-  
+
   // Generate all content with simple retry
   const [caption, description, transitionalComment] = await Promise.all([
     // Caption
     withRetry(
-      () => generateWithModel('primary', `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`),
+      () =>
+        generateWithModel(
+          "primary",
+          `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`,
+        ),
       RETRY_CONFIG.primary,
-      'caption generation'
-    ).catch(() => 
+      "caption generation",
+    ).catch(() =>
       withRetry(
-        () => generateWithModel('fallback', `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`),
+        () =>
+          generateWithModel(
+            "fallback",
+            `${loadPrompt("caption")}\n\nContext: ${effectivePrompt}`,
+          ),
         RETRY_CONFIG.fallback,
-        'caption fallback'
-      ).catch(() => "Caption unavailable")
+        "caption fallback",
+      ).catch(() => "Caption unavailable"),
     ),
-    
-    // Description  
+
+    // Description
     withRetry(
-      () => generateWithModel('primary', "Describe this image in one simple, factual sentence."),
+      () =>
+        generateWithModel(
+          "primary",
+          "Describe this image in one simple, factual sentence.",
+        ),
       RETRY_CONFIG.primary,
-      'description generation'
+      "description generation",
     ).catch(() => ""),
-    
+
     // Transitional comment (if needed)
-    prevPhotoDescription ? withRetry(
-      () => generateWithModel('primary', 
-        loadPrompt(`${personality}_transition`).replace("{prevPhotoDescription}", prevPhotoDescription)
-      ),
-      RETRY_CONFIG.primary,
-      'transition generation'
-    ).catch(() => "") : Promise.resolve("")
+    prevPhotoDescription
+      ? withRetry(
+          () =>
+            generateWithModel(
+              "primary",
+              loadPrompt(`${personality}_transition`).replace(
+                "{prevPhotoDescription}",
+                prevPhotoDescription,
+              ),
+            ),
+          RETRY_CONFIG.primary,
+          "transition generation",
+        ).catch(() => "")
+      : Promise.resolve(""),
   ]);
 
   logger.info("[CAPTION-API-Logs] ✅ Caption generation complete", {
@@ -293,9 +328,9 @@ export async function generateCaption(
     hasTransitionalComment: !!transitionalComment,
   });
 
-  return { 
-    caption, 
-    description, 
-    transitionalComment: transitionalComment || undefined 
+  return {
+    caption,
+    description,
+    transitionalComment: transitionalComment || undefined,
   };
 }

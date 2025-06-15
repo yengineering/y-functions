@@ -19,7 +19,6 @@ interface CustomHttpsOptions extends HttpsOptions {
   timeoutSeconds: number;
 }
 
-
 // Define the possible personality types for the AI model
 type PersonalityType = "yin" | "yang";
 
@@ -58,13 +57,13 @@ interface UnifiedFormData {
 
 const RETRY_CONFIG = {
   primary: { maxRetries: 3, delayMs: 1000, exponentialBackoff: true },
-  fallback: { maxRetries: 5, delayMs: 1000 }
+  fallback: { maxRetries: 5, delayMs: 1000 },
 };
 
 // Main endpoint handler for processing yin/yang personality requests
 // This function handles both text and image-based interactions
 export const yinYang = onRequest(
-  { 
+  {
     allowUnparsed: true,
     timeoutSeconds: 540, // extennded to 9 minutes (maximum allowed for HTTP functions)
   } as CustomHttpsOptions,
@@ -152,7 +151,9 @@ async function processFormDataAndImages(
         userPrompt = val;
       } else if (name === "personality") {
         const requestedPersonality = val.toLowerCase() as PersonalityType;
-        logger.info(`[Personality] Received personality type from request: ${requestedPersonality}`);
+        logger.info(
+          `[Personality] Received personality type from request: ${requestedPersonality}`,
+        );
         if (requestedPersonality === "yin" || requestedPersonality === "yang") {
           personality = requestedPersonality;
         }
@@ -162,34 +163,36 @@ async function processFormDataAndImages(
           if (!Array.isArray(rawHistory)) {
             throw new Error("History must be an array");
           }
-          
+
           // Convert to Gemini format while preserving personality info for our analysis
           chatHistory = rawHistory
-            .filter(msg => msg.parts?.[0]?.text) // Only messages with text content
+            .filter((msg) => msg.parts?.[0]?.text) // Only messages with text content
             .map((msg) => {
               // Store personality info separately for our analysis
               const personalityInfo = msg.personality;
-              
+
               // Create clean Gemini-compatible format
               const cleanMsg = {
                 role: msg.role === "assistant" ? "model" : msg.role,
-                parts: msg.parts
+                parts: msg.parts,
               };
-              
+
               // Add our metadata (not sent to Gemini, just used for logging/analysis)
               if (personalityInfo) {
                 (cleanMsg as any)._personality = personalityInfo; // Use underscore to avoid conflicts
               }
-              
+
               return cleanMsg;
             });
-          
+
           // Add dummy user message if needed
           if (chatHistory.length === 0 || chatHistory[0].role !== "user") {
             chatHistory.unshift({ role: "user", parts: [{ text: "Hello" }] });
           }
-          
-          logger.info(`[History-Processing] Processed ${chatHistory.length} messages from unified chat with personality info`);
+
+          logger.info(
+            `[History-Processing] Processed ${chatHistory.length} messages from unified chat with personality info`,
+          );
         } catch (error) {
           reject(error);
         }
@@ -265,38 +268,55 @@ async function chatResponse(
 
   // ENHANCED GROUP CHAT LOGGING
   const otherPersonality = personality === "yin" ? "yang" : "yin";
-  
+
   // Analyze conversation flow
-  const conversationAnalysis = analyzeConversationFlow(chatHistory, personality);
-  logger.info(`[GroupChat-${personality.toUpperCase()}] 🔄 Conversation analysis:`, conversationAnalysis);
+  const conversationAnalysis = analyzeConversationFlow(
+    chatHistory,
+    personality,
+  );
+  logger.info(
+    `[GroupChat-${personality.toUpperCase()}] 🔄 Conversation analysis:`,
+    conversationAnalysis,
+  );
 
   // ADD DETAILED CHAT HISTORY LOGGING WITH GROUP CONTEXT
-  logger.info(`[Chat-History-${personality.toUpperCase()}] 📚 Full chat history being passed to ${personality} model:`, {
-    historyLength: chatHistory.length,
-    isGroupChat: conversationAnalysis.isGroupChat,
-    yinMessages: conversationAnalysis.yinMessages,
-    yangMessages: conversationAnalysis.yangMessages,
-    lastSpeaker: conversationAnalysis.lastSpeaker,
-    lastPersonality: conversationAnalysis.lastPersonality,
-    history: chatHistory.map((item, index) => ({
-      index,
-      role: item.role,
-      personality: (item as any)._personality || "unknown",
-      speaker: item.role === "model" ? 
-        ((item as any)._personality === "yin" ? "😇" : 
-         (item as any)._personality === "yang" ? "😈" : "🤖") : "👤",
-      content: item.parts[0]?.text ? 
-        item.parts[0].text.substring(0, 100) + (item.parts[0].text.length > 100 ? '...' : '') : 
-        '[no text]',
-      isOtherPersonality: item.role === "model" && (item as any)._personality === otherPersonality
-    }))
-  });
+  logger.info(
+    `[Chat-History-${personality.toUpperCase()}] 📚 Full chat history being passed to ${personality} model:`,
+    {
+      historyLength: chatHistory.length,
+      isGroupChat: conversationAnalysis.isGroupChat,
+      yinMessages: conversationAnalysis.yinMessages,
+      yangMessages: conversationAnalysis.yangMessages,
+      lastSpeaker: conversationAnalysis.lastSpeaker,
+      lastPersonality: conversationAnalysis.lastPersonality,
+      history: chatHistory.map((item, index) => ({
+        index,
+        role: item.role,
+        personality: (item as any)._personality || "unknown",
+        speaker:
+          item.role === "model"
+            ? (item as any)._personality === "yin"
+              ? "😇"
+              : (item as any)._personality === "yang"
+                ? "😈"
+                : "🤖"
+            : "👤",
+        content: item.parts[0]?.text
+          ? item.parts[0].text.substring(0, 100) +
+            (item.parts[0].text.length > 100 ? "..." : "")
+          : "[no text]",
+        isOtherPersonality:
+          item.role === "model" &&
+          (item as any)._personality === otherPersonality,
+      })),
+    },
+  );
 
   const messageParts: Part[] = [];
   if (userPrompt.trim()) {
     // Add group chat context to the message if it's a group chat
     if (conversationAnalysis.isGroupChat) {
-      const contextualPrompt = conversationAnalysis.isRespondingToOther 
+      const contextualPrompt = conversationAnalysis.isRespondingToOther
         ? `[Group Chat: User just asked "${userPrompt}" - the last message was from ${conversationAnalysis.lastPersonality === "yin" ? "😇" : "😈"} (${conversationAnalysis.lastPersonality}). You can respond to the user, react to ${conversationAnalysis.lastPersonality === "yin" ? "😇" : "😈"}'s message, or both.]`
         : `[Group Chat: User said "${userPrompt}"]`;
       messageParts.push({ text: contextualPrompt });
@@ -304,86 +324,118 @@ async function chatResponse(
       messageParts.push({ text: userPrompt });
     }
   } else if (imageParts.length > 0) {
-    messageParts.push({ text: "Describe what you see and provide thoughtful commentary." });
+    messageParts.push({
+      text: "Describe what you see and provide thoughtful commentary.",
+    });
   }
   messageParts.push(...imageParts);
 
   // ADD MESSAGE PARTS LOGGING
-  logger.info(`[Message-${personality.toUpperCase()}] 💬 Message parts being sent to ${personality} model:`, {
-    partsCount: messageParts.length,
-    currentUserPrompt: userPrompt,
-    isRespondingToOtherPersonality: conversationAnalysis.isRespondingToOther,
-    parts: messageParts.map((part, index) => ({
-      index,
-      text: part.text ? part.text.substring(0, 200) + (part.text.length > 200 ? '...' : '') : undefined,
-      hasInlineData: !!part.inlineData,
-      mimeType: part.inlineData?.mimeType
-    }))
-  });
+  logger.info(
+    `[Message-${personality.toUpperCase()}] 💬 Message parts being sent to ${personality} model:`,
+    {
+      partsCount: messageParts.length,
+      currentUserPrompt: userPrompt,
+      isRespondingToOtherPersonality: conversationAnalysis.isRespondingToOther,
+      parts: messageParts.map((part, index) => ({
+        index,
+        text: part.text
+          ? part.text.substring(0, 200) + (part.text.length > 200 ? "..." : "")
+          : undefined,
+        hasInlineData: !!part.inlineData,
+        mimeType: part.inlineData?.mimeType,
+      })),
+    },
+  );
 
   // ADD GENERATION CONFIG LOGGING
-  logger.info(`[Config-${personality.toUpperCase()}] ⚙️ Generation config for ${personality} model:`, {
-    temperature: generationConfigs[personality].temperature,
-    topP: generationConfigs[personality].topP,
-    topK: generationConfigs[personality].topK,
-    maxOutputTokens: generationConfigs[personality].maxOutputTokens
-  });
+  logger.info(
+    `[Config-${personality.toUpperCase()}] ⚙️ Generation config for ${personality} model:`,
+    {
+      temperature: generationConfigs[personality].temperature,
+      topP: generationConfigs[personality].topP,
+      topK: generationConfigs[personality].topK,
+      maxOutputTokens: generationConfigs[personality].maxOutputTokens,
+    },
+  );
 
-  async function generateWithModel(modelType: 'primary' | 'fallback') {
-    logger.info(`[Model-${personality.toUpperCase()}] 🤖 Calling ${modelType} ${personality} model with complete context:`, {
-      personality,
-      modelType,
-      historyEntries: chatHistory.length,
-      currentMessageParts: messageParts.length,
-      totalTokensEstimate: estimateTokens(chatHistory, messageParts),
-      groupChatContext: {
-        isGroupChat: conversationAnalysis.isGroupChat,
-        otherPersonality: otherPersonality,
-        lastSpeaker: conversationAnalysis.lastSpeaker,
-        canSeeOtherResponses: conversationAnalysis.isRespondingToOther
-      }
-    });
+  async function generateWithModel(modelType: "primary" | "fallback") {
+    logger.info(
+      `[Model-${personality.toUpperCase()}] 🤖 Calling ${modelType} ${personality} model with complete context:`,
+      {
+        personality,
+        modelType,
+        historyEntries: chatHistory.length,
+        currentMessageParts: messageParts.length,
+        totalTokensEstimate: estimateTokens(chatHistory, messageParts),
+        groupChatContext: {
+          isGroupChat: conversationAnalysis.isGroupChat,
+          otherPersonality: otherPersonality,
+          lastSpeaker: conversationAnalysis.lastSpeaker,
+          canSeeOtherResponses: conversationAnalysis.isRespondingToOther,
+        },
+      },
+    );
 
     const model = createPersonalityModel(personality, modelType);
-    
+
     // Clean history for Gemini (preserve personality info in text content)
-    const cleanHistory = chatHistory.map(item => ({
+    const cleanHistory = chatHistory.map((item) => ({
       role: item.role,
-      parts: item.role === "model" && (item as any)._personality
-        ? [{ text: `${(item as any)._personality === "yin" ? "😇" : "😈"}: ${item.parts[0]?.text || ""}` }]
-        : item.parts
+      parts:
+        item.role === "model" && (item as any)._personality
+          ? [
+              {
+                text: `${(item as any)._personality === "yin" ? "😇" : "😈"}: ${item.parts[0]?.text || ""}`,
+              },
+            ]
+          : item.parts,
     }));
-    
+
     // LOG WHAT'S ACTUALLY SENT TO GEMINI
-    logger.info(`[Gemini-Input-${personality.toUpperCase()}] 📤 Data being sent to Gemini:`, {
-      cleanHistory: cleanHistory.map((item, index) => ({
-        index,
-        role: item.role,
-        text: item.parts[0]?.text?.substring(0, 150) + (item.parts[0]?.text && item.parts[0].text.length > 150 ? '...' : '')
-      })),
-      messageParts: messageParts.map((part, index) => ({
-        index,
-        text: part.text?.substring(0, 200) + (part.text && part.text.length > 200 ? '...' : ''),
-        hasImage: !!part.inlineData
-      }))
-    });
-    
+    logger.info(
+      `[Gemini-Input-${personality.toUpperCase()}] 📤 Data being sent to Gemini:`,
+      {
+        cleanHistory: cleanHistory.map((item, index) => ({
+          index,
+          role: item.role,
+          text:
+            item.parts[0]?.text?.substring(0, 150) +
+            (item.parts[0]?.text && item.parts[0].text.length > 150
+              ? "..."
+              : ""),
+        })),
+        messageParts: messageParts.map((part, index) => ({
+          index,
+          text:
+            part.text?.substring(0, 200) +
+            (part.text && part.text.length > 200 ? "..." : ""),
+          hasImage: !!part.inlineData,
+        })),
+      },
+    );
+
     const chatSession = model.startChat({
       generationConfig: generationConfigs[personality],
       history: cleanHistory,
     });
-    
+
     const result = await chatSession.sendMessage(messageParts);
-    
+
     const responseText = result.response.text();
-    logger.info(`[Response-${personality.toUpperCase()}] 📤 ${personality} ${modelType} model response:`, {
-      responseLength: responseText.length,
-      responsePreview: responseText.substring(0, 300) + (responseText.length > 300 ? '...' : ''),
-      personality,
-      modelType,
-      potentialReactionToOther: conversationAnalysis.isRespondingToOther
-    });
-    
+    logger.info(
+      `[Response-${personality.toUpperCase()}] 📤 ${personality} ${modelType} model response:`,
+      {
+        responseLength: responseText.length,
+        responsePreview:
+          responseText.substring(0, 300) +
+          (responseText.length > 300 ? "..." : ""),
+        personality,
+        modelType,
+        potentialReactionToOther: conversationAnalysis.isRespondingToOther,
+      },
+    );
+
     return responseText;
   }
 
@@ -391,20 +443,26 @@ async function chatResponse(
   let responseText: string;
   try {
     responseText = await withRetry(
-      () => generateWithModel('primary'),
+      () => generateWithModel("primary"),
       RETRY_CONFIG.primary,
-      'primary chat'
+      "primary chat",
     );
   } catch (error) {
-    logger.error(`[Error-${personality.toUpperCase()}] ❌ Primary ${personality} model failed:`, error);
+    logger.error(
+      `[Error-${personality.toUpperCase()}] ❌ Primary ${personality} model failed:`,
+      error,
+    );
     try {
       responseText = await withRetry(
-        () => generateWithModel('fallback'),
+        () => generateWithModel("fallback"),
         RETRY_CONFIG.fallback,
-        'fallback chat'
+        "fallback chat",
       );
     } catch (fallbackError) {
-      logger.error(`[Error-${personality.toUpperCase()}] ❌ Fallback ${personality} model also failed:`, fallbackError);
+      logger.error(
+        `[Error-${personality.toUpperCase()}] ❌ Fallback ${personality} model also failed:`,
+        fallbackError,
+      );
       responseText = JSON.stringify({ bubbles: ["... ummmmm"] });
     }
   }
@@ -416,57 +474,73 @@ async function chatResponse(
     if (!responseJson.bubbles?.length) {
       responseJson.bubbles = ["... ummmmm"];
     }
-    responseJson.bubbles = responseJson.bubbles.map((bubble: string) => 
-      bubble.replace(/^😇 yin:\s*|^😈yang:\s*/i, '').trim()
+    responseJson.bubbles = responseJson.bubbles.map((bubble: string) =>
+      bubble.replace(/^😇 yin:\s*|^😈yang:\s*/i, "").trim(),
     );
-    logger.info(`[Parsed-${personality.toUpperCase()}] 🎯 Final parsed response from ${personality}:`, {
-      bubbleCount: responseJson.bubbles.length,
-      bubbles: responseJson.bubbles,
-      mightBeReactingToOther: conversationAnalysis.isRespondingToOther && responseJson.bubbles.some((bubble: string) => 
-        bubble.includes('you') || bubble.includes('your') || bubble.includes('stop') || bubble.includes('fr')
-      )
-    });
+    logger.info(
+      `[Parsed-${personality.toUpperCase()}] 🎯 Final parsed response from ${personality}:`,
+      {
+        bubbleCount: responseJson.bubbles.length,
+        bubbles: responseJson.bubbles,
+        mightBeReactingToOther:
+          conversationAnalysis.isRespondingToOther &&
+          responseJson.bubbles.some(
+            (bubble: string) =>
+              bubble.includes("you") ||
+              bubble.includes("your") ||
+              bubble.includes("stop") ||
+              bubble.includes("fr"),
+          ),
+      },
+    );
   } catch (parseError) {
-    logger.error(`[Parse-Error-${personality.toUpperCase()}] ❌ Failed to parse ${personality} response:`, {
-      error: parseError,
-      rawResponse: responseText
-    });
+    logger.error(
+      `[Parse-Error-${personality.toUpperCase()}] ❌ Failed to parse ${personality} response:`,
+      {
+        error: parseError,
+        rawResponse: responseText,
+      },
+    );
     responseJson = { bubbles: ["I'm having trouble processing right now."] };
   }
-  
+
   return { responseText, responseJson };
 }
 
 // Helper function to analyze conversation flow for group chat dynamics
-function analyzeConversationFlow(chatHistory: any[], currentPersonality: PersonalityType) {
+function analyzeConversationFlow(
+  chatHistory: any[],
+  currentPersonality: PersonalityType,
+) {
   const otherPersonality = currentPersonality === "yin" ? "yang" : "yin";
-  
+
   // Count messages from each personality using our preserved metadata
-  const yinMessages = chatHistory.filter(msg => 
-    msg.role === "model" && (msg as any)._personality === "yin"
+  const yinMessages = chatHistory.filter(
+    (msg) => msg.role === "model" && (msg as any)._personality === "yin",
   ).length;
-  
-  const yangMessages = chatHistory.filter(msg => 
-    msg.role === "model" && (msg as any)._personality === "yang"
+
+  const yangMessages = chatHistory.filter(
+    (msg) => msg.role === "model" && (msg as any)._personality === "yang",
   ).length;
-  
-  const hasOtherPersonality = (currentPersonality === "yin" ? yangMessages : yinMessages) > 0;
-  
+
+  const hasOtherPersonality =
+    (currentPersonality === "yin" ? yangMessages : yinMessages) > 0;
+
   let lastSpeaker = "user";
   let isRespondingToOther = false;
   let lastPersonality = null;
-  
+
   if (chatHistory.length > 0) {
     const lastEntry = chatHistory[chatHistory.length - 1];
     lastSpeaker = lastEntry.role;
-    
+
     // Check if the last model response was from the other personality
     if (lastEntry.role === "model") {
       lastPersonality = (lastEntry as any)._personality;
       isRespondingToOther = lastPersonality === otherPersonality;
     }
   }
-  
+
   return {
     hasOtherPersonality,
     isGroupChat: hasOtherPersonality,
@@ -476,15 +550,24 @@ function analyzeConversationFlow(chatHistory: any[], currentPersonality: Persona
     conversationTurns: chatHistory.length,
     yinMessages,
     yangMessages,
-    otherPersonalityName: otherPersonality === "yin" ? "😇" : "😈"
+    otherPersonalityName: otherPersonality === "yin" ? "😇" : "😈",
   };
 }
 
 // Helper function to estimate token count for logging
 function estimateTokens(chatHistory: Content[], messageParts: Part[]): number {
-  const historyText = chatHistory.reduce((acc, item) => 
-    acc + item.parts.reduce((partAcc, part) => partAcc + (part.text?.length || 0), 0), 0
+  const historyText = chatHistory.reduce(
+    (acc, item) =>
+      acc +
+      item.parts.reduce(
+        (partAcc, part) => partAcc + (part.text?.length || 0),
+        0,
+      ),
+    0,
   );
-  const messageText = messageParts.reduce((acc, part) => acc + (part.text?.length || 0), 0);
+  const messageText = messageParts.reduce(
+    (acc, part) => acc + (part.text?.length || 0),
+    0,
+  );
   return Math.ceil((historyText + messageText) / 4); // Rough token estimation
 }
