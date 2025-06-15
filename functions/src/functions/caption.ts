@@ -29,7 +29,7 @@ const DESCRIPTION_PROMPT = "Describe this image in one simple, factual sentence.
 const personalityModels = {
   yin: {
     primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
+      model: "gemini-2.0-flash",
       systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
     }),
     fallback: genaiClient.getGenerativeModel({
@@ -39,7 +39,7 @@ const personalityModels = {
   },
   yang: {
     primary: genaiClient.getGenerativeModel({
-      model: "gemini-2.5-flash-preview-05-20",
+      model: "gemini-2.0-flash",
       systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
     }),
     fallback: genaiClient.getGenerativeModel({
