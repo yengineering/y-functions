@@ -32,7 +32,9 @@ export const extractTextFromImage = async (
     },
   };
   try {
-    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = client.getGenerativeModel({
+      model: "gemini-3-flash-preview",
+    });
     const result = await model.generateContent([...promptContents, imagePart]);
     const response = result.response;
     return response.text();
@@ -113,7 +115,9 @@ IF you ascertain that this image is a message conversation between people or a s
     },
   };
   try {
-    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = client.getGenerativeModel({
+      model: "gemini-3-flash-preview",
+    });
     const result = await model.generateContent([prompt, imagePart]);
     const response = result.response;
     return response.text();
