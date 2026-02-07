@@ -1,0 +1,103 @@
+diff --git a/functions/src/functions/caption.ts b/functions/src/functions/caption.ts
+index 041b6e5..9aa024d 100644
+--- a/functions/src/functions/caption.ts
++++ b/functions/src/functions/caption.ts
+@@ -283,7 +283,7 @@ export async function generateCaption(
+   });
+ 
+   const model = genaiClient.getGenerativeModel({
+-    model: "gemini-2.0-flash",
++    model: "gemini-3-flash-preview",
+     systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt(personality)}`,
+   });
+ 
+diff --git a/functions/src/functions/handleDeletedPhoto.ts b/functions/src/functions/handleDeletedPhoto.ts
+index b49406a..78387e7 100644
+--- a/functions/src/functions/handleDeletedPhoto.ts
++++ b/functions/src/functions/handleDeletedPhoto.ts
+@@ -9,12 +9,12 @@ interface CustomHttpsOptions extends HttpsOptions {
+ 
+ // Create separate models for yin and yang personalities
+ const yinModel = genaiClient.getGenerativeModel({
+-  model: "gemini-2.0-flash",
++  model: "gemini-3-flash-preview",
+   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
+ });
+ 
+ const yangModel = genaiClient.getGenerativeModel({
+-  model: "gemini-2.0-flash",
++  model: "gemini-3-flash-preview",
+   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
+ });
+ 
+diff --git a/functions/src/functions/myVibe.ts b/functions/src/functions/myVibe.ts
+index ed93d89..f8979ab 100644
+--- a/functions/src/functions/myVibe.ts
++++ b/functions/src/functions/myVibe.ts
+@@ -92,7 +92,7 @@ ${loadPrompt("myVibe")}
+ ${messagesText}`;
+ 
+     const model = genaiClient.getGenerativeModel({
+-      model: "gemini-2.0-flash-001",
++      model: "gemini-3-flash-preview-001",
+       systemInstruction: prompt,
+     });
+ 
+diff --git a/functions/src/functions/yinYang.ts b/functions/src/functions/yinYang.ts
+index 757dc91..5142d92 100644
+--- a/functions/src/functions/yinYang.ts
++++ b/functions/src/functions/yinYang.ts
+@@ -25,11 +25,11 @@ type PersonalityType = "yin" | "yang";
+ // Each model uses the same base model but with different personality prompts
+ const personalityModels = {
+   yin: genaiClient.getGenerativeModel({
+-    model: "gemini-2.0-flash",
++    model: "gemini-3-flash-preview",
+     systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
+   }),
+   yang: genaiClient.getGenerativeModel({
+-    model: "gemini-2.0-flash",
++    model: "gemini-3-flash-preview",
+     systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
+   }),
+ };
+diff --git a/functions/src/utils/ocr.ts b/functions/src/utils/ocr.ts
+index 4724092..604a92e 100644
+--- a/functions/src/utils/ocr.ts
++++ b/functions/src/utils/ocr.ts
+@@ -32,7 +32,7 @@ export const extractTextFromImage = async (
+     },
+   };
+   try {
+-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
++    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+     const result = await model.generateContent([...promptContents, imagePart]);
+     const response = result.response;
+     return response.text();
+@@ -61,7 +61,7 @@ Please describe:
+ 3. The general sentiment
+ 4. Any cultural references or trends`;
+ 
+-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
++  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+   const result = await model.generateContent([vibePrompt]);
+   const response = result.response;
+   return response.text();
+@@ -86,7 +86,7 @@ Please extract:
+ 3. The conversation flow
+ 4. Any relevant context or metadata`;
+ 
+-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
++  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+   const result = await model.generateContent([conversationPrompt]);
+   const response = result.response;
+   return response.text();
+@@ -113,7 +113,7 @@ IF you ascertain that this image is a message conversation between people or a s
+     },
+   };
+   try {
+-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
++    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+     const result = await model.generateContent([prompt, imagePart]);
+     const response = result.response;
+     return response.text();
