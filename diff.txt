@@ -6,7 +6,7 @@ index 041b6e5..9aa024d 100644
    });
  
    const model = genaiClient.getGenerativeModel({
--    model: "gemini-2.0-flash",
+-    model: "gemini-3-flash-preview",
 +    model: "gemini-3-flash-preview",
      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt(personality)}`,
    });
@@ -19,13 +19,13 @@ index b49406a..78387e7 100644
  
  // Create separate models for yin and yang personalities
  const yinModel = genaiClient.getGenerativeModel({
--  model: "gemini-2.0-flash",
+-  model: "gemini-3-flash-preview",
 +  model: "gemini-3-flash-preview",
    systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
  });
  
  const yangModel = genaiClient.getGenerativeModel({
--  model: "gemini-2.0-flash",
+-  model: "gemini-3-flash-preview",
 +  model: "gemini-3-flash-preview",
    systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
  });
@@ -38,7 +38,7 @@ index ed93d89..f8979ab 100644
  ${messagesText}`;
  
      const model = genaiClient.getGenerativeModel({
--      model: "gemini-2.0-flash-001",
+-      model: "gemini-3-flash-preview-001",
 +      model: "gemini-3-flash-preview-001",
        systemInstruction: prompt,
      });
@@ -51,12 +51,12 @@ index 757dc91..5142d92 100644
  // Each model uses the same base model but with different personality prompts
  const personalityModels = {
    yin: genaiClient.getGenerativeModel({
--    model: "gemini-2.0-flash",
+-    model: "gemini-3-flash-preview",
 +    model: "gemini-3-flash-preview",
      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
    }),
    yang: genaiClient.getGenerativeModel({
--    model: "gemini-2.0-flash",
+-    model: "gemini-3-flash-preview",
 +    model: "gemini-3-flash-preview",
      systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
    }),
@@ -69,7 +69,7 @@ index 4724092..604a92e 100644
      },
    };
    try {
--    const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+-    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
 +    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
      const result = await model.generateContent([...promptContents, imagePart]);
      const response = result.response;
@@ -78,7 +78,7 @@ index 4724092..604a92e 100644
  3. The general sentiment
  4. Any cultural references or trends`;
  
--  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+-  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
 +  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
    const result = await model.generateContent([vibePrompt]);
    const response = result.response;
@@ -87,7 +87,7 @@ index 4724092..604a92e 100644
  3. The conversation flow
  4. Any relevant context or metadata`;
  
--  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+-  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
 +  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
    const result = await model.generateContent([conversationPrompt]);
    const response = result.response;
@@ -96,7 +96,7 @@ index 4724092..604a92e 100644
      },
    };
    try {
--    const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+-    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
 +    const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
      const result = await model.generateContent([prompt, imagePart]);
      const response = result.response;

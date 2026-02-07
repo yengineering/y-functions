@@ -3,7 +3,7 @@ import { genaiClient } from "../config";
 import { loadPrompt } from "./loadPrompt";
 
 export const models = {
-  primary: "gemini-2.0-flash",
+  primary: "gemini-3-flash-preview",
   fallback: "gemini-2.5-flash-preview-05-20",
 };
 
