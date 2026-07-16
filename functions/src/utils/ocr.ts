@@ -33,7 +33,7 @@ export const extractTextFromImage = async (
   };
   try {
     const model = client.getGenerativeModel({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
     });
     const result = await model.generateContent([...promptContents, imagePart]);
     const response = result.response;
@@ -63,7 +63,7 @@ Please describe:
 3. The general sentiment
 4. Any cultural references or trends`;
 
-  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+  const model = client.getGenerativeModel({ model: "gemini-3.5-flash" });
   const result = await model.generateContent([vibePrompt]);
   const response = result.response;
   return response.text();
@@ -88,7 +88,7 @@ Please extract:
 3. The conversation flow
 4. Any relevant context or metadata`;
 
-  const model = client.getGenerativeModel({ model: "gemini-3-flash-preview" });
+  const model = client.getGenerativeModel({ model: "gemini-3.5-flash" });
   const result = await model.generateContent([conversationPrompt]);
   const response = result.response;
   return response.text();
@@ -116,7 +116,7 @@ IF you ascertain that this image is a message conversation between people or a s
   };
   try {
     const model = client.getGenerativeModel({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
     });
     const result = await model.generateContent([prompt, imagePart]);
     const response = result.response;

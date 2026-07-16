@@ -92,7 +92,7 @@ ${loadPrompt("myVibe")}
 ${messagesText}`;
 
     const model = genaiClient.getGenerativeModel({
-      model: "gemini-3-flash-preview-001",
+      model: "gemini-3.5-flash",
       systemInstruction: prompt,
     });
 

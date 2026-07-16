@@ -19,7 +19,7 @@ interface CustomHttpsOptions extends HttpsOptions {
 }
 
 const model = genaiClient.getGenerativeModel({
-  model: "gemini-2.5-flash-preview-04-17",
+  model: "gemini-3.5-flash",
   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
 });
 

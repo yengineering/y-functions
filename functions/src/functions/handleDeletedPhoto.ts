@@ -9,12 +9,12 @@ interface CustomHttpsOptions extends HttpsOptions {
 
 // Create separate models for yin and yang personalities
 const yinModel = genaiClient.getGenerativeModel({
-  model: "gemini-3-flash-preview",
+  model: "gemini-3.5-flash",
   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yin")}`,
 });
 
 const yangModel = genaiClient.getGenerativeModel({
-  model: "gemini-3-flash-preview",
+  model: "gemini-3.5-flash",
   systemInstruction: `${loadPrompt("security")}\n\n${loadPrompt("yang")}`,
 });
 

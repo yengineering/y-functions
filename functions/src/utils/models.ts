@@ -3,8 +3,8 @@ import { genaiClient } from "../config";
 import { loadPrompt } from "./loadPrompt";
 
 export const models = {
-  primary: "gemini-3-flash-preview",
-  fallback: "gemini-2.5-flash-preview-05-20",
+  primary: "gemini-3.5-flash",
+  fallback: "gemini-2.5-flash",
 };
 
 export function createPersonalityModel(
